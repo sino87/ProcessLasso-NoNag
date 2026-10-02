@@ -1,0 +1,66 @@
+name: Upstream static check
+
+on:
+  schedule:
+    - cron: '17 0 * * *'
+  workflow_dispatch:
+    inputs:
+      publish_results:
+        description: Update README and send Discord notifications
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-static-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test checker
+        run: ./tests/Test-Upstream.ps1
+      - name: Check official stable x64 release
+        id: check
+        run: ./scripts/Check-Upstream.ps1
+      - name: Save report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-static-report
+          path: dist/upstream/report.json
+          retention-days: 30
+          if-no-files-found: error
+      - name: Notify Discord and update README
+        if: ${{ always() && (steps.check.outcome == 'success' || steps.check.outcome == 'failure') && github.ref_name == github.event.repository.default_branch && (github.event_name == 'schedule' || inputs.publish_results) }}
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: ./scripts/Check-Upstream.ps1 -Publish -PublishOnly
+      - name: Commit check state and README
+        if: ${{ always() && github.ref_name == github.event.repository.default_branch && (github.event_name == 'schedule' || inputs.publish_results) }}
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git diff --quiet -- README.md .github/upstream-state.json
+          if ($LASTEXITCODE -eq 0) { exit 0 }
+          git fetch origin $env:DEFAULT_BRANCH
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot verify remote branch.' }
+          $remote = git rev-parse FETCH_HEAD
+          $current = git rev-parse HEAD
+          if ($remote -ne $current) { throw 'Remote branch changed; rerun the check.' }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- README.md .github/upstream-state.json
+          git commit -m 'Update upstream check status'
+          if ($LASTEXITCODE -ne 0) { throw 'Commit failed.' }
+          git push origin "HEAD:refs/heads/$env:DEFAULT_BRANCH"
+          if ($LASTEXITCODE -ne 0) { throw 'Push failed.' }

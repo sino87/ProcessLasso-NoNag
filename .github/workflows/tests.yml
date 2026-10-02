@@ -13,3 +13,6 @@ jobs:
       - name: Test worker exit codes
         shell: powershell
         run: ./tests/Test-WorkerExitCodes.ps1
+      - name: Test upstream checks
+        shell: powershell
+        run: ./tests/Test-Upstream.ps1

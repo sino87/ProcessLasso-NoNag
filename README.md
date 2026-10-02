@@ -2,9 +2,12 @@
 
 Remove Process Lasso purchase reminders.
 
-Last tested `Process Lasso 18.3.0.34 x64.`
+| Check | Last checked version |
+|---|---|
+| Automated static check | Not yet checked |
+| Manual test | Process Lasso 18.3.0.34 x64 |
 
-Currently accepts only the verified executable from this build.
+Currently accepts only the verified executable from the manually tested build.
 
 ## Usage
 
