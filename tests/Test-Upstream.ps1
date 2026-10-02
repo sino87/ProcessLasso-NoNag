@@ -51,9 +51,9 @@ Assert-Throws { Set-StaticReadme 'Missing row' '18.4.0.48' } 'Missing README row
 $result = Get-StaticResult ([byte[]](0,1,2)) (Join-Path $PSScriptRoot '..\src\NoNag.psm1')
 Assert ($result.Status -eq 'review' -and @($result.Sites | Where-Object Matches).Count -eq 0) 'Unknown executable cannot pass'
 $data = New-Object byte[] 1000000
-$data[0xDF00C] = 0x74; $data[0xDF00D] = 0x4D
-[Array]::Copy([byte[]](0x0F,0x85,0xD9,0,0,0), 0, $data, 0xE2532, 6)
-$data[0xE2618] = 0x75; $data[0xE2619] = 0x38
+$data[0xE168C] = 0x74; $data[0xE168D] = 0x4D
+[Array]::Copy([byte[]](0x0F,0x85,0xD9,0,0,0), 0, $data, 0xE4BF2, 6)
+$data[0xE4CD8] = 0x75; $data[0xE4CD9] = 0x38
 $result = Get-StaticResult $data (Join-Path $PSScriptRoot '..\src\NoNag.psm1')
 Assert ($result.Status -eq 'review' -and @($result.Sites | Where-Object Matches).Count -eq 3) 'Matching offset bytes cannot approve an unknown hash'
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('NoNag-upstream-' + [guid]::NewGuid().ToString('N'))

@@ -20,6 +20,8 @@ Use a VM and keep a baseline checkpoint.
 - Check existing/missing/corrupt backups, unsupported targets, and concurrent operations.
 - Check custom paths and another Windows session.
 
+For 18.4.0.48, follow [VM checks](VM-18.4.0.48.md). To test replacement of a real older backup, run `Test-NoNag.ps1` with both `-FixturePath` pointing to the new original and `-OlderFixturePath` pointing to a registered older original.
+
 ## Distribution
 
 Keep tests and CI configuration in Git. The user ZIP contains `Start.cmd`, `src/CLI.ps1`, `src/NoNag.psm1`, `README.md`, `docs/TECHNICAL.md`, and `LICENSE`. Exclude tests, maintainer checklists, and vendor binaries.
@@ -46,7 +48,7 @@ The checker selects stable x64 from the official download page, downloads the in
 
 Every run downloads and inspects the current small installer, including manual reruns. A changed installer with the same version is detected. A metadata/checksum mismatch is a check error and is retried on the next run.
 
-An executable passes only if its hash is supported by the current module, patch generation changes exactly the six expected bytes, and fixture Apply/Restore and worker-exit tests pass. Unregistered executables require analysis even when old offset bytes match. The report includes the original offsets and observed bytes for diagnosis; it does not locate or approve new patch sites automatically.
+An executable passes only if its hash is supported by the current module, patch generation changes exactly the expected bytes for that build, and fixture Apply/Restore and worker-exit tests pass. Unregistered executables require analysis even when offset bytes match. Diagnostic offsets come from the matching profile or, for unknown binaries, the latest registered profile. It does not locate or approve new patch sites automatically. Static registration does not imply VM validation.
 
 On the default branch, a pass updates only the README's **Automated static check** row. **Manual test** is updated by a maintainer after VM testing. Other branches report results without sending notifications or writing repository state. No release is created by this workflow.
 

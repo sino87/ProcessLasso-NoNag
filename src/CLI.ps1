@@ -34,7 +34,7 @@ if (-not $Installation) {
 }
 while ($true) {
     Write-Host "`nProcess Lasso NoNag" -ForegroundColor Cyan
-    Write-Host 'Supported: 18.3.0.34 x64 (exact executable hash)'
+    Write-Host 'Accepts registered x64 executable hashes. See docs/TECHNICAL.md.'
     if (-not $Installation) {
         $Installation = ([string](Read-Host 'Installation folder (blank to exit)')).Trim().Trim('"')
         if (-not $Installation) { break }
@@ -44,6 +44,7 @@ while ($true) {
         $Installation = $state.Directory
         Write-Host "Installation: $Installation"
         Write-Host "Status:       $($state.Status)"
+        if ($state.Profile) { Write-Host "Version:      $($state.Profile.Version) x64" }
         Write-Host '[1] Apply patch'
         Write-Host '[2] Restore original'
         Write-Host '[3] Change installation folder'
@@ -58,6 +59,8 @@ while ($true) {
             continue
         }
         if ($choice -eq '1') { Write-Host 'This modifies the GUI executable and invalidates its digital signature.' }
+        if ($choice -eq '1' -and -not $state.Profile.VmValidated) { Write-Host 'This build has passed static checks; VM validation is pending.' -ForegroundColor Yellow }
+        if ($choice -eq '1' -and $state.ReplaceOldBackup) { Write-Host 'The verified older backup will be replaced with the current original.' }
         Write-Host 'Save any pending GUI changes. Do not run an updater during this operation.'
         if ((Read-Host "$operation on this installation? [y/N]") -cnotmatch '^[yY]$') { continue }
         $encoded = New-NoNagWorkerCommand -ScriptPath $PSCommandPath -Action $operation -Installation $Installation

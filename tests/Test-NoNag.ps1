@@ -1,4 +1,4 @@
-param([string]$FixturePath)
+param([string]$FixturePath, [string]$OlderFixturePath)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $module = Import-Module (Join-Path $PSScriptRoot '..\src\NoNag.psm1') -Force -PassThru
@@ -18,8 +18,10 @@ if ($FixturePath) {
 } else {
     & $module { param($a,$b) $script:OriginalHash = Get-DataHash $a; $script:PatchedHash = Get-DataHash $b } $original $patched
 }
-$originalHash = & $module { $script:OriginalHash }
-$patchedHash = & $module { $script:PatchedHash }
+$fixtureHash = & $module { param($data) Get-DataHash $data } $original
+$profile = & $module { param($hash) Get-NoNagProfiles | Where-Object { $_.OriginalHash -eq $hash } } $fixtureHash
+$originalHash = $profile.OriginalHash
+$patchedHash = $profile.PatchedHash
 $script:count = 0
 
 function Assert-True($Condition, [string]$Message) {
@@ -181,6 +183,74 @@ try {
     $result = Invoke-NoNagChange $dir Apply
     Assert-True ($result.Success -and $result.Restart) 'Running GUI should restart'
     Pass 'Running GUI restart intent preserved'
+    $older = if ($OlderFixturePath) { [IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $OlderFixturePath).ProviderPath) } else { [byte[]]$original.Clone() }
+    if (-not $OlderFixturePath) { $older[0] = $older[0] -bxor 1 }
+    $olderHash = & $module { param($data) Get-DataHash $data } $older
+    if (-not $OlderFixturePath) { & $module {
+        param($hash)
+        $script:TestProfiles = @(Get-NoNagProfiles) + @(@{ Version = '18.2.0.0'; OriginalHash = $hash; PatchedHash = 'unused'; Patches = @() })
+        function script:Get-NoNagProfiles { $script:TestProfiles }
+    } $olderHash }
+    foreach ($mode in @('success','before','after','partial','failed-recovery','cancel')) {
+        $dir = New-Case "older backup $mode"
+        [IO.File]::WriteAllBytes((Join-Path $dir 'ProcessLasso-Original.exe'), $older)
+        Assert-True ((Get-NoNagState $dir).CanApply) 'Known older original can be replaced'
+        & $module {
+            param($mode)
+            $script:FailureMode = $mode
+            function script:Stop-TargetGui {
+                param($Target)
+                if ($script:FailureMode -eq 'cancel') { throw 'Cancelled.' }
+                return $true
+            }
+            function script:Replace-NoNagFile {
+                param($Source,$Target,$Backup)
+                $script:ReplaceCount++
+                if ($script:FailureMode -eq 'before') { throw 'Before replacement.' }
+                if ($script:FailureMode -eq 'partial') { [IO.File]::Move($Target,$Backup); throw 'Partial replacement.' }
+                if ($script:FailureMode -eq 'failed-recovery' -and $script:ReplaceCount -gt 1) { throw 'Recovery failed.' }
+                [IO.File]::Replace($Source,$Target,$Backup)
+                if ($script:ReplaceCount -eq 1 -and $script:FailureMode -in @('after','failed-recovery')) { throw 'After replacement.' }
+            }
+        } $mode
+        $result = Invoke-NoNagChange $dir Apply
+        $state = Get-NoNagState $dir
+        if ($mode -eq 'success') {
+            Assert-True ($result.Success -and $state.Hash -eq $patchedHash -and $state.BackupHash -eq $originalHash) 'New original replaces older backup'
+            Assert-True (@(Get-ChildItem $dir).Count -eq 2) 'Older temporary backup removed'
+            Reset-Mocks
+            $restored = Invoke-NoNagChange $dir Restore
+            Assert-True ($restored.Success -and (Get-NoNagState $dir).Hash -eq $originalHash) 'Restore returns new original'
+        } elseif ($mode -eq 'failed-recovery') {
+            Assert-True (-not $result.Success -and -not $result.Restart -and $state.BackupHash -eq $originalHash) 'Failed recovery preserves new original and blocks restart'
+            $held = @(Get-ChildItem $dir -Filter '*.old.tmp')
+            Assert-True ($held.Count -eq 1 -and (Get-FileHash $held[0].FullName).Hash.ToLowerInvariant() -eq $olderHash) 'Failed recovery preserves old backup'
+        } else {
+            Assert-True (-not $result.Success -and $state.Hash -eq $originalHash -and $state.BackupHash -eq $olderHash) 'Failure restores both original files'
+            Assert-True (@(Get-ChildItem $dir).Count -eq 2) 'Recovered operation leaves no temporary files'
+        }
+        Pass "Older backup replacement: $mode"
+    }
+    $dir = New-Case 'same-version backup'
+    [IO.File]::WriteAllBytes((Join-Path $dir 'ProcessLasso-Original.exe'), $original)
+    Assert-Rejected { Invoke-NoNagChange $dir Apply }
+    Pass 'Same-version backup refused'
+    $dir = New-Case 'patched backup'
+    [IO.File]::WriteAllBytes((Join-Path $dir 'ProcessLasso-Original.exe'), $patched)
+    Assert-Rejected { Invoke-NoNagChange $dir Apply }
+    Pass 'Patched backup refused'
+    $future = [byte[]]$original.Clone()
+    $future[1] = $future[1] -bxor 1
+    $futureHash = & $module { param($data) Get-DataHash $data } $future
+    & $module {
+        param($hash)
+        $script:TestProfiles = @(Get-NoNagProfiles) + @(@{ Version = '99.0.0.0'; OriginalHash = $hash; PatchedHash = 'unused-future'; Patches = @() })
+        function script:Get-NoNagProfiles { $script:TestProfiles }
+    } $futureHash
+    $dir = New-Case 'newer backup'
+    [IO.File]::WriteAllBytes((Join-Path $dir 'ProcessLasso-Original.exe'), $future)
+    Assert-Rejected { Invoke-NoNagChange $dir Apply }
+    Pass 'Known newer backup refused'
     Write-Host "$script:count tests passed."
 } finally {
     $resolved = [IO.Path]::GetFullPath($testRoot)

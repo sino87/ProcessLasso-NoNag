@@ -25,23 +25,26 @@ function Get-StaticResult([byte[]]$Data, [string]$ModulePath) {
     & $module {
         param($Data)
         $hash = Get-DataHash $Data
-        $sites = foreach ($site in @(
-            @{ Offset = 0xDF00C; Expected = '74 4D'; Length = 2 },
-            @{ Offset = 0xE2532; Expected = '0F 85 D9 00 00 00'; Length = 6 },
-            @{ Offset = 0xE2618; Expected = '75 38'; Length = 2 }
-        )) {
+        $profile = Get-NoNagProfiles | Where-Object { $_.OriginalHash -eq $hash } | Select-Object -First 1
+        $diagnostic = if ($profile) { $profile } else { Get-NoNagProfiles | Sort-Object { [version]$_.Version } -Descending | Select-Object -First 1 }
+        $sites = foreach ($patch in $diagnostic.Patches) {
+            $site = @{ Offset = $patch.Offset; Expected = [BitConverter]::ToString($patch.Before).Replace('-', ' '); Length = $patch.Before.Length }
             $actual = 'Out of range'
             if ($Data.Length -ge $site.Offset + $site.Length) {
                 $actual = [BitConverter]::ToString($Data, $site.Offset, $site.Length).Replace('-', ' ')
             }
             @{ Offset = ('0x{0:X}' -f $site.Offset); Expected = $site.Expected; Actual = $actual; Matches = $actual -ceq $site.Expected }
         }
-        if ($hash -ne $script:OriginalHash) {
+        if (-not $profile) {
             return @{ Status = 'review'; Reason = 'Executable hash is not supported by the current patch. Offset matches are diagnostic only.'; ExecutableHash = $hash; Sites = @($sites) }
         }
         $patched = New-PatchedData $Data
         $changed = @(for ($i = 0; $i -lt $Data.Length; $i++) { if ($Data[$i] -ne $patched[$i]) { $i } })
-        $expected = @(0xDF00C, 0xE2532, 0xE2533, 0xE2534, 0xE2537, 0xE2618)
+        $expected = @(foreach ($patch in $profile.Patches) {
+            for ($i = 0; $i -lt $patch.Before.Length; $i++) {
+                if ($patch.Before[$i] -ne $patch.After[$i]) { $patch.Offset + $i }
+            }
+        })
         if (($changed -join ',') -cne ($expected -join ',')) { throw 'Unexpected patch changes.' }
         @{ Status = 'pass'; Reason = 'Registered executable and exact patch changes verified.'; ExecutableHash = $hash; Sites = @($sites) }
     } $Data

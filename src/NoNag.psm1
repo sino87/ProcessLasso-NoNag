@@ -3,6 +3,28 @@ $ErrorActionPreference = 'Stop'
 $script:OriginalHash = '2f6f1005b5d67a7e7468c66b106d45ac0e2537cbc82fb6b7edce3c89fe9a989a'
 $script:PatchedHash = 'b82a5b6f6cfe4e7ef416bb039ae986b348cea9e678978b17107b53bd3d562137'
 
+function Get-NoNagProfiles {
+    @{
+        Version = '18.3.0.34'; VmValidated = $true; OriginalHash = $script:OriginalHash; PatchedHash = $script:PatchedHash
+        Patches = @(
+            @{ Offset = 0xDF00C; Before = [byte[]](0x74,0x4D); After = [byte[]](0xEB,0x4D) },
+            @{ Offset = 0xE2532; Before = [byte[]](0x0F,0x85,0xD9,0,0,0); After = [byte[]](0xE9,0xDA,0,0,0,0x90) },
+            @{ Offset = 0xE2618; Before = [byte[]](0x75,0x38); After = [byte[]](0xEB,0x38) }
+        )
+    }
+    @{
+        Version = '18.4.0.48'
+        VmValidated = $true
+        OriginalHash = '3643982a58b21712add1b4c806412c48fec54b7ded78ec4e782e5bb8480cae2b'
+        PatchedHash = 'ab83d2421a41382b2a2ababf06eda9d98d3c4b833d148bf41fce91b5d40fe8a5'
+        Patches = @(
+            @{ Offset = 0xE168C; Before = [byte[]](0x74,0x4D); After = [byte[]](0xEB,0x4D) },
+            @{ Offset = 0xE4BF2; Before = [byte[]](0x0F,0x85,0xD9,0,0,0); After = [byte[]](0xE9,0xDA,0,0,0,0x90) },
+            @{ Offset = 0xE4CD8; Before = [byte[]](0x75,0x38); After = [byte[]](0xEB,0x38) }
+        )
+    }
+}
+
 function Get-DataHash([byte[]]$Data) {
     $sha = [Security.Cryptography.SHA256]::Create()
     try { [BitConverter]::ToString($sha.ComputeHash($Data)).Replace('-', '').ToLowerInvariant() }
@@ -23,21 +45,29 @@ function Get-NoNagState([string]$Directory) {
     $status = 'Unsupported or modified executable'
     $apply = $false
     $restore = $false
+    $profile = @(Get-NoNagProfiles | Where-Object { $hash -eq $_.OriginalHash -or $hash -eq $_.PatchedHash } | Select-Object -First 1)
+    $profile = if ($profile.Count) { $profile[0] } else { $null }
+    $oldBackup = $false
+    if ($profile -and $backupHash) {
+        $oldBackup = @(Get-NoNagProfiles | Where-Object { $backupHash -eq $_.OriginalHash -and [version]$_.Version -lt [version]$profile.Version }).Count -eq 1
+    }
     if (-not $hash) { $status = 'Executable missing' }
-    if ($hash -eq $script:OriginalHash) {
+    if ($profile -and $hash -eq $profile.OriginalHash) {
         $status = 'Original'
-        $apply = -not (Test-Path -LiteralPath $backup)
+        $apply = (-not (Test-Path -LiteralPath $backup)) -or $oldBackup
+        if ($oldBackup) { $status = 'Original; verified older backup will be replaced' }
         if (-not $apply) { $status = 'Original; backup already exists (apply blocked)' }
     }
-    if ($hash -eq $script:PatchedHash) {
+    if ($profile -and $hash -eq $profile.PatchedHash) {
         $status = 'Patched'
-        $restore = $backupHash -eq $script:OriginalHash
+        $restore = $backupHash -eq $profile.OriginalHash
         if (-not $restore) { $status = 'Patched; verified backup missing (restore blocked)' }
     }
     [pscustomobject]@{
         Directory = $full; Target = $target; Backup = $backup
         Hash = $hash; BackupHash = $backupHash; Status = $status
         CanApply = $apply; CanRestore = $restore
+        Profile = $profile; ReplaceOldBackup = $oldBackup
     }
 }
 
@@ -103,12 +133,10 @@ function Stop-TargetGui([string]$Target) {
 }
 
 function New-PatchedData([byte[]]$Data) {
-    if ((Get-DataHash $Data) -ne $script:OriginalHash) { throw 'Source hash mismatch.' }
-    $patches = @(
-        @{ Offset = 0xDF00C; Before = [byte[]](0x74,0x4D); After = [byte[]](0xEB,0x4D) },
-        @{ Offset = 0xE2532; Before = [byte[]](0x0F,0x85,0xD9,0,0,0); After = [byte[]](0xE9,0xDA,0,0,0,0x90) },
-        @{ Offset = 0xE2618; Before = [byte[]](0x75,0x38); After = [byte[]](0xEB,0x38) }
-    )
+    $hash = Get-DataHash $Data
+    $profile = Get-NoNagProfiles | Where-Object { $hash -eq $_.OriginalHash } | Select-Object -First 1
+    if (-not $profile) { throw 'Source hash mismatch.' }
+    $patches = $profile.Patches
     foreach ($patch in $patches) {
         for ($i = 0; $i -lt $patch.Before.Length; $i++) {
             if ($Data[$patch.Offset + $i] -ne $patch.Before[$i]) { throw 'Patch bytes do not match.' }
@@ -116,7 +144,7 @@ function New-PatchedData([byte[]]$Data) {
     }
     $output = [byte[]]$Data.Clone()
     foreach ($patch in $patches) { [Array]::Copy($patch.After, 0, $output, $patch.Offset, $patch.After.Length) }
-    if ((Get-DataHash $output) -ne $script:PatchedHash) { throw 'Generated hash mismatch.' }
+    if ((Get-DataHash $output) -ne $profile.PatchedHash) { throw 'Generated hash mismatch.' }
     return ,$output
 }
 
@@ -142,6 +170,10 @@ function Invoke-NoNagChange {
     $lockPath = Join-Path $state.Directory 'ProcessLasso-NoNag.lock'
     $lock = [IO.FileStream]::new($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None, 1, [IO.FileOptions]::DeleteOnClose)
     $stage = Join-Path $state.Directory ('ProcessLasso-NoNag-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+    $oldStage = $stage + '.old.tmp'
+    $oldMoved = $false
+    $originalHash = $state.Profile.OriginalHash
+    $patchedHash = $state.Profile.PatchedHash
     $replaceAttempted = $false
     $wasRunning = $false
     $success = $false
@@ -154,21 +186,26 @@ function Invoke-NoNagChange {
             $data = New-PatchedData ([IO.File]::ReadAllBytes($state.Target))
             $stream = [IO.File]::Open($stage, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
             try { $stream.Write($data, 0, $data.Length); $stream.Flush($true) } finally { $stream.Dispose() }
-            Assert-NoNagTarget $stage $script:PatchedHash
+            Assert-NoNagTarget $stage $patchedHash
         }
         $wasRunning = Stop-TargetGui $state.Target
         Assert-NoNagTarget $state.Target $state.Hash
         if ((Get-PathHash $state.Backup) -ne $state.BackupHash) { throw 'Backup changed during preparation.' }
         if ($Action -eq 'Apply') {
-            if (Test-Path -LiteralPath $state.Backup) { throw 'Backup already exists. It will not be overwritten.' }
+            if ($state.ReplaceOldBackup) {
+                Assert-NoNagTarget $state.Backup $state.BackupHash
+                [IO.File]::Move($state.Backup, $oldStage)
+                $oldMoved = $true
+                Assert-NoNagTarget $oldStage $state.BackupHash
+            } elseif (Test-Path -LiteralPath $state.Backup) { throw 'Backup already exists. It will not be overwritten.' }
             $replaceAttempted = $true
             Replace-NoNagFile $stage $state.Target $state.Backup
-            Assert-NoNagTarget $state.Target $script:PatchedHash
-            Assert-NoNagTarget $state.Backup $script:OriginalHash
+            Assert-NoNagTarget $state.Target $patchedHash
+            Assert-NoNagTarget $state.Backup $originalHash
         } else {
             $replaceAttempted = $true
             Replace-NoNagFile $state.Backup $state.Target $stage
-            Assert-NoNagTarget $state.Target $script:OriginalHash
+            Assert-NoNagTarget $state.Target $originalHash
         }
         $success = $true
         $restartSafe = $true
@@ -179,27 +216,34 @@ function Invoke-NoNagChange {
             if ($replaceAttempted) {
                 $currentHash = Get-PathHash $state.Target
                 if ($Action -eq 'Apply') {
-                    if ($currentHash -eq $script:PatchedHash) {
-                        Assert-NoNagTarget $state.Backup $script:OriginalHash
+                    if ($currentHash -eq $patchedHash) {
+                        Assert-NoNagTarget $state.Backup $originalHash
                         Replace-NoNagFile $state.Backup $state.Target $stage
                     } elseif (-not $currentHash) {
-                        Assert-NoNagTarget $state.Backup $script:OriginalHash
+                        Assert-NoNagTarget $state.Backup $originalHash
                         [IO.File]::Move($state.Backup, $state.Target)
                     } elseif ($currentHash -ne $state.Hash) { throw 'Unexpected target contents; automatic recovery stopped.' }
                 } else {
-                    if ($currentHash -eq $script:OriginalHash) {
-                        Assert-NoNagTarget $stage $script:PatchedHash
+                    if ($currentHash -eq $originalHash) {
+                        Assert-NoNagTarget $stage $patchedHash
                         if (Test-Path -LiteralPath $state.Backup) { throw 'Backup path occupied; automatic recovery stopped.' }
                         Replace-NoNagFile $stage $state.Target $state.Backup
                     } elseif (-not $currentHash) {
-                        Assert-NoNagTarget $stage $script:PatchedHash
+                        Assert-NoNagTarget $stage $patchedHash
                         [IO.File]::Move($stage, $state.Target)
                     } elseif ($currentHash -ne $state.Hash) { throw 'Unexpected target contents; automatic recovery stopped.' }
                 }
                 Assert-NoNagTarget $state.Target $state.Hash
-                if ((Get-PathHash $state.Backup) -ne $state.BackupHash) { throw 'Backup state differs; inspect the files before retrying.' }
                 $message += ' Previous state preserved or restored.'
             }
+            if ($oldMoved) {
+                Assert-NoNagTarget $state.Target $state.Hash
+                Assert-NoNagTarget $oldStage $state.BackupHash
+                if (Test-Path -LiteralPath $state.Backup) { throw 'Backup path occupied; older backup remains in temporary storage.' }
+                [IO.File]::Move($oldStage, $state.Backup)
+                $oldMoved = $false
+            }
+            if ((Get-PathHash $state.Backup) -ne $state.BackupHash) { throw 'Backup state differs; inspect the files before retrying.' }
             $restartSafe = (Get-PathHash $state.Target) -eq $state.Hash
         } catch {
             $message += " Recovery incomplete: $($_.Exception.Message) Preserve the backup and temporary files."
@@ -208,6 +252,9 @@ function Invoke-NoNagChange {
         if ($success -or $restartSafe) {
             if ([IO.File]::Exists($stage)) {
                 try { [IO.File]::Delete($stage) } catch { $message += " Temporary file remains: $stage" }
+            }
+            if ($success -and $oldMoved) {
+                try { [IO.File]::Delete($oldStage) } catch { $message += " Older backup temporary file remains: $oldStage" }
             }
         }
         $lock.Dispose()

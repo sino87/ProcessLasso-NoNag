@@ -5,9 +5,7 @@ Remove Process Lasso purchase reminders.
 | Check | Last checked version |
 |---|---|
 | Automated static check | Not yet checked |
-| Manual test | Process Lasso 18.3.0.34 x64 |
-
-Currently accepts only the verified executable from the manually tested build.
+| Manual test | Process Lasso 18.4.0.48 x64 |
 
 ## Usage
 
@@ -26,7 +24,7 @@ Requires Windows PowerShell 5.1. No additional software is needed.
 
 - Patching invalidates the executable's digital signature.
 - Unsupported or modified executables are refused. Do not update Process Lasso during an operation.
-- Existing backups are not overwritten.
+- Verified older backups are replaced after an update; unknown backups are refused.
 
 Independent of Bitsum. Licensed under [MIT](LICENSE).
 
