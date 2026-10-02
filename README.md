@@ -4,7 +4,7 @@ Remove Process Lasso purchase reminders.
 
 | Check | Last checked version |
 |---|---|
-| Automated static check | Not yet checked |
+| Automated static check | Process Lasso 18.4.0.48 x64 |
 | Manual test | Process Lasso 18.4.0.48 x64 |
 
 ## Usage
