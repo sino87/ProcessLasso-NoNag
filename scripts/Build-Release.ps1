@@ -11,7 +11,7 @@ if ($Tag -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?$') 
     throw 'Expected a version tag such as v1.0.0 or v1.0.0-rc.1.'
 }
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$files = @('Start.cmd', 'src/CLI.ps1', 'src/NoNag.psm1', 'README.md', 'docs/TECHNICAL.md', 'LICENSE')
+$files = @('Start.cmd', 'src/CLI.ps1', 'src/NoNag.psm1', 'src/profiles.json', 'README.md', 'docs/TECHNICAL.md', 'LICENSE')
 foreach ($file in $files) {
     if (-not (Test-Path -LiteralPath (Join-Path $root $file) -PathType Leaf)) { throw "Missing release file: $file" }
 }

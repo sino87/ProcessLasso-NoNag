@@ -6,3 +6,5 @@
 *.log
 .vscode/
 dist/
+__pycache__/
+*.pyc

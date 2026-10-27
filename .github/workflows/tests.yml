@@ -7,6 +7,15 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install analysis dependencies
+        shell: powershell
+        run: python -m pip install --only-binary=:all: --require-hashes -r scripts/analysis-requirements.txt
+      - name: Test analysis and publication
+        shell: powershell
+        run: python -m unittest discover -s tests -p 'test_*.py'
       - name: Test file transactions
         shell: powershell
         run: ./tests/Test-NoNag.ps1

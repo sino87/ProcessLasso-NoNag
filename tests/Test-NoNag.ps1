@@ -16,7 +16,7 @@ if ($FixturePath) {
     $original = [IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $FixturePath).ProviderPath)
     $patched = & $module { param($data) New-PatchedData $data } $original
 } else {
-    & $module { param($a,$b) $script:OriginalHash = Get-DataHash $a; $script:PatchedHash = Get-DataHash $b } $original $patched
+    & $module { param($a,$b) $script:Profiles[0].OriginalHash = Get-DataHash $a; $script:Profiles[0].PatchedHash = Get-DataHash $b } $original $patched
 }
 $fixtureHash = & $module { param($data) Get-DataHash $data } $original
 $profile = & $module { param($hash) Get-NoNagProfiles | Where-Object { $_.OriginalHash -eq $hash } } $fixtureHash
@@ -188,8 +188,7 @@ try {
     $olderHash = & $module { param($data) Get-DataHash $data } $older
     if (-not $OlderFixturePath) { & $module {
         param($hash)
-        $script:TestProfiles = @(Get-NoNagProfiles) + @(@{ Version = '18.2.0.0'; OriginalHash = $hash; PatchedHash = 'unused'; Patches = @() })
-        function script:Get-NoNagProfiles { $script:TestProfiles }
+        $script:Profiles += @(@{ Version = '18.2.0.0'; OriginalHash = $hash; PatchedHash = 'unused'; Patches = @() })
     } $olderHash }
     foreach ($mode in @('success','before','after','partial','failed-recovery','cancel')) {
         $dir = New-Case "older backup $mode"
@@ -244,8 +243,7 @@ try {
     $futureHash = & $module { param($data) Get-DataHash $data } $future
     & $module {
         param($hash)
-        $script:TestProfiles = @(Get-NoNagProfiles) + @(@{ Version = '99.0.0.0'; OriginalHash = $hash; PatchedHash = 'unused-future'; Patches = @() })
-        function script:Get-NoNagProfiles { $script:TestProfiles }
+        $script:Profiles += @(@{ Version = '99.0.0.0'; OriginalHash = $hash; PatchedHash = 'unused-future'; Patches = @() })
     } $futureHash
     $dir = New-Case 'newer backup'
     [IO.File]::WriteAllBytes((Join-Path $dir 'ProcessLasso-Original.exe'), $future)

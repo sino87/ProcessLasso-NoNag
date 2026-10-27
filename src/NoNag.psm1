@@ -1,29 +1,35 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$script:OriginalHash = '2f6f1005b5d67a7e7468c66b106d45ac0e2537cbc82fb6b7edce3c89fe9a989a'
-$script:PatchedHash = 'b82a5b6f6cfe4e7ef416bb039ae986b348cea9e678978b17107b53bd3d562137'
-
-function Get-NoNagProfiles {
-    @{
-        Version = '18.3.0.34'; VmValidated = $true; OriginalHash = $script:OriginalHash; PatchedHash = $script:PatchedHash
-        Patches = @(
-            @{ Offset = 0xDF00C; Before = [byte[]](0x74,0x4D); After = [byte[]](0xEB,0x4D) },
-            @{ Offset = 0xE2532; Before = [byte[]](0x0F,0x85,0xD9,0,0,0); After = [byte[]](0xE9,0xDA,0,0,0,0x90) },
-            @{ Offset = 0xE2618; Before = [byte[]](0x75,0x38); After = [byte[]](0xEB,0x38) }
-        )
+function Read-NoNagProfiles([string]$Path) {
+    $profiles = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($Path))
+    if (-not $profiles.Count) { throw 'No patch profiles.' }
+    $hashes = @{}
+    foreach ($profile in $profiles) {
+        if ((($profile.PSObject.Properties.Name | Sort-Object) -join ',') -cne 'OriginalHash,PatchedHash,Patches,Version,VmValidated') { throw 'Invalid profile fields.' }
+        if ($profile.Version -cnotmatch '^\d+\.\d+\.\d+\.\d+$' -or $profile.VmValidated -isnot [bool]) { throw 'Invalid profile version or validation flag.' }
+        foreach ($hash in @($profile.OriginalHash,$profile.PatchedHash)) {
+            if ($hash -cnotmatch '^[a-f0-9]{64}$' -or $hashes.ContainsKey($hash)) { throw 'Invalid or duplicate profile hash.' }
+            $hashes[$hash] = $true
+        }
+        if (@($profile.Patches).Count -ne 3 -or (($profile.Patches.Name | Sort-Object) -join ',') -cne 'startup-nag,startup-offer,window-restore-nag') { throw 'Expected three named patch routes.' }
+        $end = 0L
+        foreach ($patch in $profile.Patches) {
+            if ((($patch.PSObject.Properties.Name | Sort-Object) -join ',') -cne 'After,Before,Name,Offset') { throw 'Invalid patch fields.' }
+            if ($patch.Offset -isnot [long] -and $patch.Offset -isnot [int]) { throw 'Invalid patch offset.' }
+            if ($patch.Offset -lt $end -or $patch.Offset -gt [int]::MaxValue - 6 -or $patch.Before -cnotmatch '^(?:74|75)[a-f0-9]{2}$|^0f8[45][a-f0-9]{8}$' -or $patch.After -cnotmatch '^[a-f0-9]+$') { throw 'Invalid patch encoding or overlap.' }
+            $before = [byte[]]@(for ($i=0; $i -lt $patch.Before.Length; $i+=2) { [Convert]::ToByte($patch.Before.Substring($i,2),16) })
+            $after = [byte[]]@(for ($i=0; $i -lt $patch.After.Length; $i+=2) { [Convert]::ToByte($patch.After.Substring($i,2),16) })
+            $expected = if ($before.Length -eq 2) { [byte[]](0xEB,$before[1]) } else { [byte[]](@(0xE9) + @([BitConverter]::GetBytes([int]([BitConverter]::ToInt32($before,2)+1))) + @(0x90)) }
+            if ([BitConverter]::ToString($after) -cne [BitConverter]::ToString($expected)) { throw 'Patch must retain its original branch target.' }
+            $patch.Before = $before; $patch.After = $after
+            $end = $patch.Offset + $before.Length
+        }
     }
-    @{
-        Version = '18.4.0.48'
-        VmValidated = $true
-        OriginalHash = '3643982a58b21712add1b4c806412c48fec54b7ded78ec4e782e5bb8480cae2b'
-        PatchedHash = 'ab83d2421a41382b2a2ababf06eda9d98d3c4b833d148bf41fce91b5d40fe8a5'
-        Patches = @(
-            @{ Offset = 0xE168C; Before = [byte[]](0x74,0x4D); After = [byte[]](0xEB,0x4D) },
-            @{ Offset = 0xE4BF2; Before = [byte[]](0x0F,0x85,0xD9,0,0,0); After = [byte[]](0xE9,0xDA,0,0,0,0x90) },
-            @{ Offset = 0xE4CD8; Before = [byte[]](0x75,0x38); After = [byte[]](0xEB,0x38) }
-        )
-    }
+    $profiles
 }
+
+$script:Profiles = @(Read-NoNagProfiles (Join-Path $PSScriptRoot 'profiles.json'))
+function Get-NoNagProfiles { $script:Profiles }
 
 function Get-DataHash([byte[]]$Data) {
     $sha = [Security.Cryptography.SHA256]::Create()
@@ -270,4 +276,4 @@ function New-NoNagWorkerCommand {
     [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
 }
 
-Export-ModuleMember -Function Get-NoNagState, Find-NoNagInstallation, Invoke-NoNagChange, New-NoNagWorkerCommand
+Export-ModuleMember -Function Get-NoNagState, Find-NoNagInstallation, Invoke-NoNagChange, New-NoNagWorkerCommand, Get-NoNagProfiles

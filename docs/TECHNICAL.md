@@ -4,6 +4,8 @@
 
 Registered builds are listed below. The SHA-256 identifies the executable; the version label alone is insufficient. Both builds have passed static and transaction checks and have been manually validated in a VM.
 
+`src/profiles.json` is the canonical patch registry used by the CLI, static checker, candidate generator, and ZIP builder. Each profile fixes the original/patched hashes and three named branches. Profile loading rejects overlapping ranges, unknown fields, invalid hashes, and replacements that change the branch target.
+
 18.3.0.34 x64, 2,631,664 bytes:
 
 | State | SHA-256 |

@@ -50,33 +50,4 @@ function Get-StaticResult([byte[]]$Data, [string]$ModulePath) {
     } $Data
 }
 
-function Get-NotificationPlan($State, $Report) {
-    $events = @()
-    if ($Report.Status -eq 'error') {
-        if ($State.LastError -cne $Report.ErrorKey) { $events += @{ Kind = 'error'; Key = $Report.ErrorKey } }
-    } else {
-        if ($State.LastError) { $events += @{ Kind = 'recovery'; Key = '' } }
-        if ($Report.Status -eq 'review' -and $Report.ExecutableHash -notin $State.NotifiedHashes) {
-            $events += @{ Kind = 'review'; Key = $Report.ExecutableHash }
-        }
-    }
-    return ,$events
-}
-
-function Set-StaticReadme([string]$Text, [string]$Version) {
-    if ($Version -notmatch '^\d+\.\d+\.\d+\.\d+$') { throw 'Invalid version.' }
-    $pattern = '(?m)^\| Automated (?:compatibility|static) check \|[^\r\n]*$'
-    if ([regex]::Matches($Text, $pattern).Count -ne 1) { throw 'README check row unavailable.' }
-    [regex]::Replace($Text, $pattern, "| Automated static check | Process Lasso $Version x64 |")
-}
-
-function Send-CheckNotification($State, $Event, [scriptblock]$Send) {
-    & $Send | Out-Null
-    switch ($Event.Kind) {
-        'review' { $State.NotifiedHashes = @($State.NotifiedHashes) + $Event.Key }
-        'error' { $State.LastError = $Event.Key }
-        'recovery' { $State.LastError = '' }
-    }
-}
-
-Export-ModuleMember -Function Get-UpstreamRelease, Assert-BitsumSignature, Get-StaticResult, Get-NotificationPlan, Set-StaticReadme, Send-CheckNotification
+Export-ModuleMember -Function Get-UpstreamRelease, Assert-BitsumSignature, Get-StaticResult
