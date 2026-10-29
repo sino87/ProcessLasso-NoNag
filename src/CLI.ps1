@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$Installation,
-    [ValidateSet('Menu','Apply','Restore')][string]$Action = 'Menu'
+    [ValidateSet('Menu','Enable','Disable')][string]$Action = 'Menu'
 )
 
 Set-StrictMode -Version Latest
@@ -34,7 +34,6 @@ if (-not $Installation) {
 }
 while ($true) {
     Write-Host "`nProcess Lasso NoNag" -ForegroundColor Cyan
-    Write-Host 'Accepts registered x64 executable hashes. See docs/TECHNICAL.md.'
     if (-not $Installation) {
         $Installation = ([string](Read-Host 'Installation folder (blank to exit)')).Trim().Trim('"')
         if (-not $Installation) { break }
@@ -44,23 +43,21 @@ while ($true) {
         $Installation = $state.Directory
         Write-Host "Installation: $Installation"
         Write-Host "Status:       $($state.Status)"
-        if ($state.Profile) { Write-Host "Version:      $($state.Profile.Version) x64" }
-        Write-Host '[1] Apply patch'
-        Write-Host '[2] Restore original'
+        if ($state.Version) { Write-Host "Version:      $($state.Version) x64" }
+        Write-Host '[1] Enable'
+        Write-Host '[2] Disable'
         Write-Host '[3] Change installation folder'
         Write-Host '[0] Exit'
         $choice = Read-Host 'Select an option'
         if ($choice -eq '0') { break }
         if ($choice -eq '3') { $Installation = ''; continue }
         if ($choice -notin @('1','2')) { continue }
-        $operation = if ($choice -eq '1') { 'Apply' } else { 'Restore' }
-        if (($choice -eq '1' -and -not $state.CanApply) -or ($choice -eq '2' -and -not $state.CanRestore)) {
+        $operation = if ($choice -eq '1') { 'Enable' } else { 'Disable' }
+        if (($choice -eq '1' -and -not $state.CanEnable) -or ($choice -eq '2' -and -not $state.CanDisable)) {
             Write-Host "Unavailable: $($state.Status)." -ForegroundColor Yellow
             continue
         }
-        if ($choice -eq '1') { Write-Host 'This modifies the GUI executable and invalidates its digital signature.' }
-        if ($choice -eq '1' -and -not $state.Profile.VmValidated) { Write-Host 'This build has passed static checks; VM validation is pending.' -ForegroundColor Yellow }
-        if ($choice -eq '1' -and $state.ReplaceOldBackup) { Write-Host 'The verified older backup will be replaced with the current original.' }
+        if ($state.Legacy) { Write-Host 'The matching original executable will be restored before continuing.' }
         Write-Host 'Save any pending GUI changes. Do not run an updater during this operation.'
         if ((Read-Host "$operation on this installation? [y/N]") -cnotmatch '^[yY]$') { continue }
         $encoded = New-NoNagWorkerCommand -ScriptPath $PSCommandPath -Action $operation -Installation $Installation
@@ -71,8 +68,13 @@ while ($true) {
         $child = Start-Process -FilePath $shellPath -ArgumentList @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand',$encoded) -Verb RunAs -Wait -PassThru
         if ($child.ExitCode -in @(10,11)) {
             $verified = Get-NoNagState $Installation
-            $expectedState = if ($child.ExitCode -eq 10) { if ($operation -eq 'Apply') { 'Patched' } else { 'Original' } } else { $state.Status }
-            if ($verified.Status -eq $expectedState) {
+            $restartVerified = if ($child.ExitCode -eq 10) {
+                $verified.Status -ceq $(if ($operation -eq 'Enable') { 'Enabled' } else { 'Disabled' }) -and
+                $verified.Hash -ceq $(if ($state.Legacy) { $state.Legacy.OriginalHash } else { $state.Hash }) -and -not $verified.BackupHash
+            } else {
+                $verified.Hash -ceq $state.Hash -and $verified.BackupHash -ceq $state.BackupHash -and $verified.DllHash -ceq $state.DllHash
+            }
+            if ($restartVerified) {
                 try {
                     Start-Process -FilePath $verified.Target -WorkingDirectory $Installation
                     Write-Host 'Process Lasso restarted.'

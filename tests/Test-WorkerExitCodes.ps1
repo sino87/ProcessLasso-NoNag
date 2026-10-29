@@ -7,7 +7,7 @@ $probe = Join-Path $folder 'worker test.ps1'
 $installation = "C:\Test Folder\User's Process Lasso"
 $shell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 try {
-    foreach ($action in @('Apply','Restore')) {
+    foreach ($action in @('Enable','Disable')) {
         foreach ($code in @(0,1,10,11)) {
             $body = 'param($Action,$Installation)' + "`r`n"
             $body += 'if ($Action -ne ''' + $action + ''' -or $Installation -ne ''' + $installation.Replace("'", "''") + ''') { exit 99 }' + "`r`n"
@@ -20,7 +20,7 @@ try {
         }
     }
     [IO.File]::WriteAllText($probe, 'throw ''Worker failed before returning a result.''')
-    $encoded = New-NoNagWorkerCommand -ScriptPath $probe -Action Apply -Installation $installation
+    $encoded = New-NoNagWorkerCommand -ScriptPath $probe -Action Enable -Installation $installation
     $startInfo = [Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $shell
     $startInfo.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' + $encoded

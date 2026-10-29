@@ -8,3 +8,10 @@
 dist/
 __pycache__/
 *.pyc
+build/
+bin/
+*.obj
+*.lib
+*.exp
+*.pdb
+*.ilk

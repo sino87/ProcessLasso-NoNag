@@ -1,59 +1,42 @@
 # Technical details
 
-## Supported binary
+## DLL behavior
 
-Registered builds are listed below. The SHA-256 identifies the executable; the version label alone is insufficient. Both builds have passed static and transaction checks and have been manually validated in a VM.
+Process Lasso loads the adjacent `version.dll`. The proxy forwards 17 VERSION exports, by name and ordinal, to the absolute System32 DLL. x64 assembly thunks preserve argument registers and the caller's stack, including for the undocumented `GetFileVersionInfoByHandle` export. System DLLs are not bundled.
 
-`src/profiles.json` is the canonical patch registry used by the CLI, static checker, candidate generator, and ZIP builder. Each profile fixes the original/patched hashes and three named branches. Profile loading rejects overlapping ranges, unknown fields, invalid hashes, and replacements that change the branch target.
+The real VERSION module is resolved lazily on the first forwarded call. `DllMain` only inspects the loaded image and replaces one import slot; it does not load another DLL or wait for a worker. VERSION calls from another DLL's initialization routine are outside the tested contract.
 
-18.3.0.34 x64, 2,631,664 bytes:
+Only `ProcessLasso.exe`'s `DialogBoxParamW` import is changed in memory. Suppression requires a callback inside the main image and a `pl_rsrc_*.dll` in the same directory:
 
-| State | SHA-256 |
-|---|---|
-| Original | `2f6f1005b5d67a7e7468c66b106d45ac0e2537cbc82fb6b7edce3c89fe9a989a` |
-| Patched | `b82a5b6f6cfe4e7ef416bb039ae986b348cea9e678978b17107b53bd3d562137` |
-
-18.4.0.48 x64, 2,669,040 bytes:
-
-| State | SHA-256 |
-|---|---|
-| Original | `3643982a58b21712add1b4c806412c48fec54b7ded78ec4e782e5bb8480cae2b` |
-| Patched | `ab83d2421a41382b2a2ababf06eda9d98d3c4b833d148bf41fce91b5d40fe8a5` |
-
-## Patch
-
-Three branches skip startup purchase reminders, startup discount offers, and purchase reminders on GUI redisplay. Six bytes change.
-
-| File offset | Original | Replacement |
+| Dialog | Additional condition | Result |
 |---|---|---|
-| `0xDF00C` | `74 4D` | `EB 4D` |
-| `0xE2532` | `0F 85 D9 00 00 00` | `E9 DA 00 00 00 90` |
-| `0xE2618` | `75 38` | `EB 38` |
+| `0xC3` | Readable reminder record: body `0x291`, nonnegative delay at offset 16, readable text pointer | Return `1` |
+| `0x13BF` | Resource exists | Return `1` |
+| Other calls | Includes body `0x1CE` (feature unavailable) | Forward unchanged |
 
-18.4.0.48:
+Matching purchase dialogs requested by `/nag` are also suppressed. Licensing, activation and feature restrictions are unchanged. Other process names only receive VERSION forwarding.
 
-| Route | File offset | Original | Replacement | Target RVA |
-|---|---|---|---|---|
-| GUI redisplay | `0xE168C` | `74 4D` | `EB 4D` | `0xE22DB` |
-| Startup offer | `0xE4BF2` | `0F 85 D9 00 00 00` | `E9 DA 00 00 00 90` | `0xE58D1` |
-| Startup reminder | `0xE4CD8` | `75 38` | `EB 38` | `0xE5912` |
+## Installation and migration
 
-These sites are instruction boundaries in executable sections and retain the existing branch targets. Resource `0x291` identifies the purchase reminder; dialog `0x13BF` identifies the discount offer. The three routes retain the corresponding control flow from 18.3.0.34. The host executable matches the signed file extracted from the official installer.
+The CLI requires an x64 executable with a valid Bitsum signature, or an exact registered legacy patched hash. Future signed versions are not rejected solely because their hash is new.
 
-The shared predicate, generic dialog function, and core engine are unchanged. Explicit `/nag` invocation is not patched. This does not unlock Pro features. The modified signature reports `HashMismatch`.
+`src/known-files.json` identifies the original and patched EXEs from 18.3.0.34 and 18.4.0.48, plus previous NoNag DLLs. The current DLL is verified against the distribution manifest. Known older DLL hashes must be added before publishing an upgrade.
 
-## File operations
+Legacy migration requires the matching original backup. A verified older backup left after a Process Lasso update is removed without replacing the newer executable. Unknown or newer backups are preserved and block the operation.
 
-Apply stages and verifies the payload before replacing the target and retaining the original backup. Restore requires the known patched target and verified original backup. Updated targets cannot be downgraded using an old backup.
+Changes use a directory lock, staged files, atomic replacement and rollback. Failed recovery retains its temporary directory and blocks automatic restart. Only the GUI is closed; the core engine is not stopped. `Enabled` describes the installed DLL, not a live suppression test.
 
-An existing backup is replaceable only when its hash matches a registered original from a strictly older version. Same-version, newer, patched, and unknown backups are refused. The older backup is moved to a unique `.old.tmp` file during Apply and deleted after successful verification. Caught failures restore the prior target and backup; incomplete recovery preserves both backups and temporary files and blocks automatic restart.
+## Automated checks
 
-Operations use a directory lock and Windows file replacement. Caught failures attempt rollback; unexpected contents stop recovery. On incomplete recovery, preserve the backup and `ProcessLasso-NoNag-*.tmp` files. Recover from a verified installer or VM checkpoint if necessary.
+The daily/manual workflow verifies official installer checksums and Bitsum signatures, then checks the latest published NoNag DLL against the extracted x64 EXE and English resources:
 
-## Process handling
+1. Required VERSION exports and imports.
+2. Reviewed dialog helper, callbacks, callers, record layout and resource roles, using normalized structural fingerprints.
+3. Proxy ownership of the VERSION and dialog imports in an isolated executable copy, stopped before application entry. Nonempty TLS callback arrays require review and are never allowed to run.
+4. Native dialog and VERSION forwarding tests with the extracted resources.
 
-Only the selected installation's GUI is closed. Another Windows session blocks the operation. After an eight-second graceful-exit attempt, force-close requires confirmation. The core engine is not stopped.
+An EXE hash change alone does not fail compatibility. Structural differences produce `review`; acquisition, signature or tooling failures produce `error`. These checks cover the reviewed display routes and do not replace manual application testing.
 
-The elevated worker returns an exit code to the menu: 0 = success, 1 = failure, 10 = success and restart, 11 = recovered failure and restart. The encoded-command wrapper forwards the code explicitly. The menu verifies the resulting file state before restarting under its own privilege level.
+Only a published-release pass updates the automated README row. Development runs do not publish results. Discord notifications use `DISCORD_WEBHOOK_URL`, deduplicate by executable/DLL/checker/result identity and retry failed deliveries. Reports contain hashes, release and environment information; vendor binaries are not uploaded.
 
-This PowerShell implementation is separate from the referenced project; patch locations were derived from per-version analysis. Upstream Python code and vendor binaries are not included.
+See [Development and testing](https://github.com/sino87/ProcessLasso-NoNag/blob/master/docs/TESTING.md) for build and release steps.

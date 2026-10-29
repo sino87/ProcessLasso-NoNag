@@ -1,0 +1,19 @@
+LIBRARY "version"
+EXPORTS
+GetFileVersionInfoA=Forward0 @1
+GetFileVersionInfoByHandle=Forward1 @2
+GetFileVersionInfoExA=Forward2 @3
+GetFileVersionInfoExW=Forward3 @4
+GetFileVersionInfoSizeA=Forward4 @5
+GetFileVersionInfoSizeExA=Forward5 @6
+GetFileVersionInfoSizeExW=Forward6 @7
+GetFileVersionInfoSizeW=Forward7 @8
+GetFileVersionInfoW=Forward8 @9
+VerFindFileA=Forward9 @10
+VerFindFileW=Forward10 @11
+VerInstallFileA=Forward11 @12
+VerInstallFileW=Forward12 @13
+VerLanguageNameA=Forward13 @14
+VerLanguageNameW=Forward14 @15
+VerQueryValueA=Forward15 @16
+VerQueryValueW=Forward16 @17

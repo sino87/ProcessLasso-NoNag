@@ -1,6 +1,16 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+function Get-CheckerRevision {
+    $content = [Collections.Generic.List[byte]]::new()
+    foreach ($name in @('check_compatibility.py', 'pe_image.py', 'compatibility-reference.json')) {
+        $content.AddRange([IO.File]::ReadAllBytes((Join-Path $PSScriptRoot $name)))
+    }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { [BitConverter]::ToString($sha.ComputeHash($content.ToArray())).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+}
+
 function Get-UpstreamRelease([string]$Html) {
     $body = [regex]::Match($Html, '(?is)<tbody\b[^>]*\bid="pl-dl-body-stable"[^>]*>(.*?)</tbody>')
     $rows = [regex]::Matches($body.Groups[1].Value, '(?is)<tr\b[^>]*\bdata-arch="x64"[^>]*>(.*?)</tr>')
@@ -20,34 +30,4 @@ function Assert-BitsumSignature([string]$Path) {
     }
 }
 
-function Get-StaticResult([byte[]]$Data, [string]$ModulePath) {
-    $module = Import-Module $ModulePath -Force -PassThru
-    & $module {
-        param($Data)
-        $hash = Get-DataHash $Data
-        $profile = Get-NoNagProfiles | Where-Object { $_.OriginalHash -eq $hash } | Select-Object -First 1
-        $diagnostic = if ($profile) { $profile } else { Get-NoNagProfiles | Sort-Object { [version]$_.Version } -Descending | Select-Object -First 1 }
-        $sites = foreach ($patch in $diagnostic.Patches) {
-            $site = @{ Offset = $patch.Offset; Expected = [BitConverter]::ToString($patch.Before).Replace('-', ' '); Length = $patch.Before.Length }
-            $actual = 'Out of range'
-            if ($Data.Length -ge $site.Offset + $site.Length) {
-                $actual = [BitConverter]::ToString($Data, $site.Offset, $site.Length).Replace('-', ' ')
-            }
-            @{ Offset = ('0x{0:X}' -f $site.Offset); Expected = $site.Expected; Actual = $actual; Matches = $actual -ceq $site.Expected }
-        }
-        if (-not $profile) {
-            return @{ Status = 'review'; Reason = 'Executable hash is not supported by the current patch. Offset matches are diagnostic only.'; ExecutableHash = $hash; Sites = @($sites) }
-        }
-        $patched = New-PatchedData $Data
-        $changed = @(for ($i = 0; $i -lt $Data.Length; $i++) { if ($Data[$i] -ne $patched[$i]) { $i } })
-        $expected = @(foreach ($patch in $profile.Patches) {
-            for ($i = 0; $i -lt $patch.Before.Length; $i++) {
-                if ($patch.Before[$i] -ne $patch.After[$i]) { $patch.Offset + $i }
-            }
-        })
-        if (($changed -join ',') -cne ($expected -join ',')) { throw 'Unexpected patch changes.' }
-        @{ Status = 'pass'; Reason = 'Registered executable and exact patch changes verified.'; ExecutableHash = $hash; Sites = @($sites) }
-    } $Data
-}
-
-Export-ModuleMember -Function Get-UpstreamRelease, Assert-BitsumSignature, Get-StaticResult
+Export-ModuleMember -Function Get-CheckerRevision, Get-UpstreamRelease, Assert-BitsumSignature

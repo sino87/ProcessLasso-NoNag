@@ -1,0 +1,10 @@
+{
+  "LegacyExecutables": [
+    {"Version":"18.3.0.34","OriginalHash":"2f6f1005b5d67a7e7468c66b106d45ac0e2537cbc82fb6b7edce3c89fe9a989a","PatchedHash":"b82a5b6f6cfe4e7ef416bb039ae986b348cea9e678978b17107b53bd3d562137"},
+    {"Version":"18.4.0.48","OriginalHash":"3643982a58b21712add1b4c806412c48fec54b7ded78ec4e782e5bb8480cae2b","PatchedHash":"ab83d2421a41382b2a2ababf06eda9d98d3c4b833d148bf41fce91b5d40fe8a5"}
+  ],
+  "DllHashes": [
+    "d5f8fcdbac8a4060727f25664fe541a752cc815273c74a0dd6565844a74b50b1",
+    "e094293c1b95068a78a0e0b232b2109795d13c9ce675960928aa6125ba740ed5"
+  ]
+}

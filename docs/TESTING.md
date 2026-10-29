@@ -1,45 +1,42 @@
-# Maintainer guide
+# Development and testing
 
-## Tests
-
-Run from the repository root on Windows with Python 3.12 x64:
+Requires MSVC x64 with CMake, the Windows SDK, Python 3.12 and Windows PowerShell 5.1.
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-NoNag.ps1
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-WorkerExitCodes.ps1
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-Upstream.ps1
 python -m pip install --only-binary=:all: --require-hashes -r scripts/analysis-requirements.txt
-python -m unittest discover -s tests -p "test_*.py"
+./scripts/Build-Native.ps1
+python -m unittest discover -s tests -p 'test_*.py'
+./tests/Test-NoNag.ps1
+./tests/Test-WorkerExitCodes.ps1
+./tests/Test-Upstream.ps1
+./tests/Test-Package.ps1
 ```
 
-Transaction tests use temporary files and stub GUI operations. Add `-FixturePath path/to/ProcessLasso.exe` to test a registered original. Add `-OlderFixturePath path/to/older/ProcessLasso.exe` to test replacement of a registered older backup.
+Native tests use self-authored dialog resources. To include local vendor fixtures, set `NONAG_FIXTURE_ROOT` to a directory containing version-named folders, each with `ProcessLasso.exe` and `pl_rsrc_english.dll`. These tests also check deliberately incompatible copies. Do not commit vendor binaries.
 
-## VM checks
+## Manual check
 
-Keep a baseline checkpoint. Verify Apply/Restore with the GUI open and closed, hashes, UAC, graceful exit, force-close cancellation, and restart. Check startup, normal launch, tray redisplay, process-list updates, settings, and core-engine reconnection. Test invalid backups, unsupported targets, concurrent operations, custom paths, and another Windows session.
+Use an installation where the original purchase reminder can be reproduced. Check Enable/Disable, legacy migration and DLL upgrades, then normal launch, tray redisplay, startup launch, process-list updates, settings and feature messages. Check administrator cancellation, GUI cancellation, restart and Process Lasso updates. Choose a test environment appropriate for your installation.
 
-After validating a candidate, set its profile's `VmValidated` to `true`, update the README's **Manual test** row and `TECHNICAL.md`, then merge its PR.
+Update the manual README row with the Process Lasso version only after testing the actual NoNag build. Record the NoNag build and DLL hash separately.
+
+## Draft release
+
+Run **Draft release** from Actions with the chosen tag. It builds/tests the DLL and attaches a ZIP and `SHA256SUMS.txt` to a draft. Review and publish manually. Before releasing a replacement DLL, add the previous release's DLL hash to `src/known-files.json`.
+
+For a local package:
+
+```powershell
+./scripts/Build-Native.ps1
+./scripts/Build-Release.ps1 -Tag development
+```
+
+For a release build, use the chosen tag with `Build-Native.ps1 -BuildId` and `Build-Release.ps1 -Tag`.
 
 ## Upstream checks
 
-Configure the `DISCORD_WEBHOOK_URL` repository secret and enable **Allow GitHub Actions to create and approve pull requests** under Settings > Actions > General.
+Before the first DLL release, run **Upstream compatibility check** manually with `development_build` enabled. Results are retained without README updates or Discord notifications.
 
-**Upstream static check** runs daily around 09:17 JST and supports manual runs. Uncheck **Publish candidates, update README and notify Discord** for diagnostics without publishing. Select **Reopen a candidate proposal** only when retrying a closed candidate PR; edited branches are not overwritten.
+After publishing the first DLL release, run the default check once. Then set the repository Actions variable `DLL_CHECKS_ENABLED` to `true` to enable the daily 09:17 JST check. Keep the existing `DISCORD_WEBHOOK_URL` secret. The check job has read-only repository access; only the publication job can update README/state and access the webhook.
 
-Review the run summary and artifacts for candidate ZIPs and analysis results. Reports expire after 30 days. A generated candidate remains **review**, pending manual VM validation. Only a passing registered-build check updates the README's **Automated static check** row.
-
-If publication fails, check workflow permissions, branch protection, webhook configuration, or concurrent branch updates before rerunning. Failed notifications are retried; a state-save failure can cause duplicate delivery. Public repositories disable scheduled workflows after 60 days without activity.
-
-For local checks, install the analysis dependencies above and 7-Zip, then run `./scripts/Check-Upstream.ps1`. Override `-PythonPath` or `-SevenZipPath` as needed. `-MetadataPath` and `-InstallerPath` accept downloaded official files; `-SkipAnalysis` checks only registered profiles. Output stays under ignored `dist/upstream/`.
-
-To repeat the historical analysis using locally held vendor files:
-
-```powershell
-./scripts/Test-HistoricalAnalysis.ps1 -BaselineDirectory path/to/18.3.0.34 -TargetDirectory path/to/18.4.0.48
-```
-
-## Release
-
-Run **Draft release** from Actions and enter a new tag such as `v0.1.2`. Review the draft's notes and ZIP, then publish manually. Existing tags are refused.
-
-To build locally, run `./scripts/Build-Release.ps1 -Tag v0.1.2`. Output is `dist/ProcessLasso-NoNag-v0.1.2.zip`; existing files are not overwritten. Vendor binaries are excluded from both the user ZIP and Git.
+After reviewing changed dialog code, update the checker as needed and record the new structure with `check_compatibility.py --record-reference --expected-source-hash <reviewed SHA-256>` and the usual file arguments. Reference recording is a maintainer operation; scheduled checks never change the reference.

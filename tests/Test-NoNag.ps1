@@ -1,260 +1,176 @@
-param([string]$FixturePath, [string]$OlderFixturePath)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$module = Import-Module (Join-Path $PSScriptRoot '..\src\NoNag.psm1') -Force -PassThru
-$testRoot = Join-Path ([IO.Path]::GetTempPath()) ('NoNag-tests-' + [Guid]::NewGuid().ToString('N'))
-$null = New-Item -ItemType Directory -Path $testRoot
-$original = New-Object byte[] 1000000
-$original[0xDF00C] = 0x74; $original[0xDF00D] = 0x4D
-[Array]::Copy([byte[]](0x0F,0x85,0xD9,0,0,0), 0, $original, 0xE2532, 6)
-$original[0xE2618] = 0x75; $original[0xE2619] = 0x38
-$patched = [byte[]]$original.Clone()
-$patched[0xDF00C] = 0xEB
-[Array]::Copy([byte[]](0xE9,0xDA,0,0,0,0x90), 0, $patched, 0xE2532, 6)
-$patched[0xE2618] = 0xEB
-if ($FixturePath) {
-    $original = [IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $FixturePath).ProviderPath)
-    $patched = & $module { param($data) New-PatchedData $data } $original
-} else {
-    & $module { param($a,$b) $script:Profiles[0].OriginalHash = Get-DataHash $a; $script:Profiles[0].PatchedHash = Get-DataHash $b } $original $patched
-}
-$fixtureHash = & $module { param($data) Get-DataHash $data } $original
-$profile = & $module { param($hash) Get-NoNagProfiles | Where-Object { $_.OriginalHash -eq $hash } } $fixtureHash
-$originalHash = $profile.OriginalHash
-$patchedHash = $profile.PatchedHash
-$script:count = 0
-
-function Assert-True($Condition, [string]$Message) {
-    if (-not $Condition) { throw "Assertion failed: $Message" }
-}
-
+$module = Import-Module (Join-Path $PSScriptRoot '../src/NoNag.psm1') -Force -PassThru
+$root = Join-Path ([IO.Path]::GetTempPath()) ('nonag-transactions-' + [Guid]::NewGuid().ToString('N'))
+$null = [IO.Directory]::CreateDirectory($root)
+$original = [Text.Encoding]::UTF8.GetBytes('original current')
+$patched = [Text.Encoding]::UTF8.GetBytes('legacy patched')
+$older = [Text.Encoding]::UTF8.GetBytes('original older')
+$preview = [Text.Encoding]::UTF8.GetBytes('own preview dll')
+$currentDll = [IO.File]::ReadAllBytes((Join-Path $PSScriptRoot '../bin/version.dll'))
+$originalHash = & $module { param($b) Get-DataHash $b } $original
+$patchedHash = & $module { param($b) Get-DataHash $b } $patched
+$olderHash = & $module { param($b) Get-DataHash $b } $older
+$previewHash = & $module { param($b) Get-DataHash $b } $preview
+$dllHash = & $module { param($b) Get-DataHash $b } $currentDll
+& $module {
+    param($a,$b,$c,$d)
+    $script:Known.LegacyExecutables[1].OriginalHash=$a
+    $script:Known.LegacyExecutables[1].PatchedHash=$b
+    $script:Known.LegacyExecutables[0].OriginalHash=$c
+    $script:Known.DllHashes=@($d)
+    $script:TestOfficialHash=$a
+    function script:Get-OfficialVersion([string]$Path) {
+        if ((Get-PathHash $Path) -ceq $script:TestOfficialHash) { return '18.4.0.48' }
+        throw 'A valid Bitsum signature is required.'
+    }
+} $originalHash $patchedHash $olderHash $previewHash
+$script:count=0
+function Assert($Value,[string]$Message) { if (-not $Value) { throw $Message } }
+function Pass([string]$Name) { ++$script:count; Write-Host "PASS $Name" }
 function Reset-Mocks {
     & $module {
-        $script:ReplaceCount = 0
+        $script:Calls=0; $script:FailAt=0; $script:After=$false; $script:RecoveryFail=$false; $script:MissingTarget=$false
         function script:Stop-TargetGui { param($Target) return $false }
-        function script:Replace-NoNagFile { param($Source,$Target,$Backup) [IO.File]::Replace($Source,$Target,$Backup) }
+        function script:Get-TargetGui { param($Target) }
+        function script:Replace-NoNagFile([string]$Source,[string]$Target,[string]$Backup) {
+            ++$script:Calls
+            if ($script:Calls -eq $script:FailAt -and $script:MissingTarget) { [IO.File]::Move($Target,$Backup); throw 'Replacement stopped after moving original' }
+            if ($script:Calls -eq $script:FailAt -and -not $script:After) { throw 'Injected replace failure' }
+            if ($script:RecoveryFail -and $script:Calls -gt $script:FailAt) { throw 'Injected recovery failure' }
+            if ($Backup) { [IO.File]::Replace($Source,$Target,$Backup) } else { [IO.File]::Replace($Source,$Target,$null) }
+            if ($script:Calls -eq $script:FailAt -and $script:After) { throw 'Injected partial replace failure' }
+        }
+        function script:Move-NoNagFile([string]$Source,[string]$Target) {
+            ++$script:Calls
+            if ($script:Calls -eq $script:FailAt -and -not $script:After) { throw 'Injected move failure' }
+            if ($script:RecoveryFail -and $script:Calls -gt $script:FailAt) { throw 'Injected recovery failure' }
+            [IO.File]::Move($Source,$Target)
+            if ($script:Calls -eq $script:FailAt -and $script:After) { throw 'Injected partial move failure' }
+        }
     }
 }
-
-function New-Case([string]$Name) {
+function New-Case([string]$Name,[switch]$Legacy,[switch]$PreviewDll) {
     Reset-Mocks
-    $folder = Join-Path $testRoot $Name
-    $null = New-Item -ItemType Directory -Path $folder
-    [IO.File]::WriteAllBytes((Join-Path $folder 'ProcessLasso.exe'), $original)
-    return $folder
+    $dir=Join-Path $root $Name
+    $null=[IO.Directory]::CreateDirectory($dir)
+    $data=if ($Legacy) { $patched } else { $original }
+    [IO.File]::WriteAllBytes((Join-Path $dir 'ProcessLasso.exe'),$data)
+    if ($Legacy) { [IO.File]::WriteAllBytes((Join-Path $dir 'ProcessLasso-Original.exe'),$original) }
+    if ($PreviewDll) { [IO.File]::WriteAllBytes((Join-Path $dir 'version.dll'),$preview) }
+    return $dir
 }
-
-function Assert-Rejected([scriptblock]$Operation) {
-    $rejected = $false
-    try { $result = & $Operation; $rejected = $null -ne $result -and -not $result.Success }
-    catch { $rejected = $true }
-    Assert-True $rejected 'Operation should be rejected'
+function Snapshot([string]$Dir) {
+    $s=Get-NoNagState $Dir
+    return "$($s.Hash)|$($s.BackupHash)|$($s.DllHash)"
 }
-
-function Pass([string]$Name) { $script:count++; Write-Host "PASS $Name" }
-
+function Rejected([scriptblock]$Run) {
+    $failed=$false
+    try { $r=& $Run; $failed=$null -ne $r -and -not $r.Success } catch { $failed=$true }
+    Assert $failed 'Operation should have failed'
+}
 try {
-    $dir = New-Case "round trip ' with spaces"
-    $result = Invoke-NoNagChange $dir Apply
-    Assert-True $result.Success $result.Message
-    Assert-True (-not $result.Restart) 'Closed GUI must stay closed'
-    $state = Get-NoNagState $dir
-    Assert-True ($state.Hash -eq $patchedHash -and $state.BackupHash -eq $originalHash) 'Apply hashes'
-    Assert-True (@(Get-ChildItem $dir).Count -eq 2) 'Apply temporary files removed'
-    $result = Invoke-NoNagChange $dir Restore
-    Assert-True $result.Success $result.Message
-    $state = Get-NoNagState $dir
-    Assert-True ($state.Hash -eq $originalHash -and $state.BackupHash -eq '') 'Restore hashes'
-    Assert-True (@(Get-ChildItem $dir).Count -eq 1) 'Restore cleanup'
-    Pass 'Apply and restore exact bytes'
-
-    $dir = New-Case 'existing backup'
-    [IO.File]::WriteAllText((Join-Path $dir 'ProcessLasso-Original.exe'), 'do not overwrite')
-    Assert-Rejected { Invoke-NoNagChange $dir Apply }
-    Assert-True ([IO.File]::ReadAllText((Join-Path $dir 'ProcessLasso-Original.exe')) -eq 'do not overwrite') 'Backup preserved'
-    Assert-True ((Get-NoNagState $dir).Hash -eq $originalHash) 'Target unchanged'
-    Pass 'Existing backup refused'
-
-    $dir = New-Case 'already patched'
-    $null = Invoke-NoNagChange $dir Apply
-    Assert-Rejected { Invoke-NoNagChange $dir Apply }
-    Pass 'Double application refused'
-
-    $dir = New-Case 'updated exe'
-    $null = Invoke-NoNagChange $dir Apply
-    [IO.File]::WriteAllText((Join-Path $dir 'ProcessLasso.exe'), 'new version')
-    Assert-Rejected { Invoke-NoNagChange $dir Restore }
-    Assert-True ([IO.File]::ReadAllText((Join-Path $dir 'ProcessLasso.exe')) -eq 'new version') 'Updated executable preserved'
-    Assert-True ((Get-NoNagState $dir).BackupHash -eq $originalHash) 'Old backup preserved'
-    Pass 'Update cannot be downgraded by restore'
-
-    $dir = New-Case 'missing backup'
-    [IO.File]::WriteAllBytes((Join-Path $dir 'ProcessLasso.exe'), $patched)
-    Assert-Rejected { Invoke-NoNagChange $dir Restore }
-    Pass 'Restore without backup refused'
-
-    $dir = New-Case 'corrupt backup'
-    [IO.File]::WriteAllBytes((Join-Path $dir 'ProcessLasso.exe'), $patched)
-    [IO.File]::WriteAllText((Join-Path $dir 'ProcessLasso-Original.exe'), 'bad backup')
-    Assert-Rejected { Invoke-NoNagChange $dir Restore }
-    Pass 'Corrupt backup refused'
-
-    $dir = New-Case 'gui cancel'
-    & $module { function script:Stop-TargetGui { param($Target) throw 'User cancelled force close.' } }
-    Assert-Rejected { Invoke-NoNagChange $dir Apply }
-    Assert-True ((Get-NoNagState $dir).Hash -eq $originalHash) 'Cancellation preserved executable'
-    Assert-True (@(Get-ChildItem $dir).Count -eq 1) 'Cancellation cleaned staging file'
-    Pass 'GUI-close cancellation leaves files unchanged'
-
-    $dir = New-Case 'concurrent updater'
-    & $module { function script:Stop-TargetGui { param($Target) [IO.File]::WriteAllText($Target,'updated meanwhile'); return $false } }
-    Assert-Rejected { Invoke-NoNagChange $dir Apply }
-    Assert-True ([IO.File]::ReadAllText((Join-Path $dir 'ProcessLasso.exe')) -eq 'updated meanwhile') 'Concurrent update not overwritten'
-    Pass 'Change during preparation detected'
-
-    foreach ($action in @('Apply','Restore')) {
-        $dir = New-Case "rollback $action"
-        if ($action -eq 'Restore') { $null = Invoke-NoNagChange $dir Apply }
-        $before = Get-NoNagState $dir
-        & $module {
-            function script:Stop-TargetGui { param($Target) return $true }
-            function script:Replace-NoNagFile {
-                param($Source,$Target,$Backup)
-                [IO.File]::Replace($Source,$Target,$Backup)
-                $script:ReplaceCount++
-                if ($script:ReplaceCount -eq 1) { throw 'Injected failure after replacement.' }
+    $dir=New-Case "round trip ' quotes and spaces"
+    $r=Invoke-NoNagChange $dir Enable
+    Assert ($r.Success -and -not $r.Restart) $r.Message
+    $s=Get-NoNagState $dir
+    Assert ($s.Status -ceq 'Enabled' -and $s.Hash -ceq $originalHash -and $s.DllHash -ceq $dllHash) 'Enable changed the executable or wrong DLL'
+    $r=Invoke-NoNagChange $dir Disable
+    Assert ($r.Success -and (Get-NoNagState $dir).Status -ceq 'Disabled') $r.Message
+    Assert (@(Get-ChildItem -LiteralPath $dir -Force).Count -eq 1) 'Recovery files remain'
+    Pass 'Enable and Disable preserve original executable'
+    foreach ($action in @('Enable','Disable')) {
+        $dir=New-Case "idempotent-$action"
+        $null=Invoke-NoNagChange $dir $action
+        & $module { function script:Stop-TargetGui { throw 'No-op closed GUI' } }
+        $r=Invoke-NoNagChange $dir $action
+        Assert ($r.Success -and -not $r.Restart) $r.Message
+        Pass "Idempotent $action"
+    }
+    foreach ($action in @('Enable','Disable')) {
+        $dir=New-Case "legacy-$action" -Legacy
+        $r=Invoke-NoNagChange $dir $action
+        $s=Get-NoNagState $dir
+        Assert ($r.Success -and $s.Hash -ceq $originalHash -and -not $s.BackupHash) $r.Message
+        Assert ($s.DllHash -ceq $(if ($action -eq 'Enable') { $dllHash } else { '' })) 'Wrong migrated DLL state'
+        Pass "Legacy migration $action"
+        $dir=New-Case "preview-$action" -PreviewDll
+        $r=Invoke-NoNagChange $dir $action
+        Assert ($r.Success -and (Get-NoNagState $dir).DllHash -ceq $(if ($action -eq 'Enable') { $dllHash } else { '' })) $r.Message
+        Pass "Preview DLL $action"
+        $dir=New-Case "old-backup-$action"
+        [IO.File]::WriteAllBytes((Join-Path $dir 'ProcessLasso-Original.exe'),$older)
+        $r=Invoke-NoNagChange $dir $action
+        $s=Get-NoNagState $dir
+        Assert ($r.Success -and $s.Hash -ceq $originalHash -and -not $s.BackupHash) 'Older backup must not downgrade current executable'
+        Pass "Remove verified stale backup $action"
+    }
+    foreach ($kind in @('missing-backup','wrong-backup','unknown-dll','unknown-exe','unknown-backup','newer-backup','missing-exe')) {
+        $dir=New-Case $kind -Legacy:($kind -in @('missing-backup','wrong-backup'))
+        switch ($kind) {
+            'missing-backup' { [IO.File]::Delete((Join-Path $dir 'ProcessLasso-Original.exe')) }
+            'wrong-backup' { [IO.File]::WriteAllBytes((Join-Path $dir 'ProcessLasso-Original.exe'),$older) }
+            'unknown-dll' { [IO.File]::WriteAllText((Join-Path $dir 'version.dll'),'someone else') }
+            'unknown-exe' { [IO.File]::WriteAllText((Join-Path $dir 'ProcessLasso.exe'),'modified') }
+            'unknown-backup' { [IO.File]::WriteAllText((Join-Path $dir 'ProcessLasso-Original.exe'),'unknown') }
+            'newer-backup' {
+                [IO.File]::WriteAllBytes((Join-Path $dir 'ProcessLasso-Original.exe'),$older)
+                & $module { $script:Known.LegacyExecutables[0].Version='99.0.0.0' }
+            }
+            'missing-exe' { [IO.File]::Delete((Join-Path $dir 'ProcessLasso.exe')) }
+        }
+        $before=Snapshot $dir
+        foreach ($action in @('Enable','Disable')) { Rejected { Invoke-NoNagChange $dir $action } }
+        Assert ((Snapshot $dir) -ceq $before) 'Refused files were changed'
+        & $module { $script:Known.LegacyExecutables[0].Version='18.3.0.34' }
+        Pass "Refuse $kind"
+    }
+    foreach ($action in @('Enable','Disable')) {
+        $max=if ($action -eq 'Enable') { 3 } else { 2 }
+        foreach ($at in 1..$max) {
+            foreach ($after in @($false,$true)) {
+                $dir=New-Case "failure-$action-$at-$after" -Legacy
+                $before=Snapshot $dir
+                & $module { param($n,$a) $script:FailAt=$n; $script:After=$a; function script:Stop-TargetGui { param($Target) return $true } } $at $after
+                $r=Invoke-NoNagChange $dir $action
+                Assert (-not $r.Success -and $r.Restart -and (Snapshot $dir) -ceq $before) $r.Message
+                Assert (-not @(Get-ChildItem -LiteralPath $dir -Directory).Count) 'Successful recovery left artifacts'
+                Pass "Rollback $action operation $at partial=$after"
             }
         }
-        $result = Invoke-NoNagChange $dir $action
-        Assert-True (-not $result.Success -and $result.Restart) 'Failure permits restart after recovery'
-        $after = Get-NoNagState $dir
-        Assert-True ($after.Hash -eq $before.Hash -and $after.BackupHash -eq $before.BackupHash) 'Complete rollback'
-        Pass "$action rollback after replacement"
     }
-
-    foreach ($action in @('Apply','Restore')) {
-        $dir = New-Case "partial replacement $action"
-        if ($action -eq 'Restore') { $null = Invoke-NoNagChange $dir Apply }
-        $before = Get-NoNagState $dir
-        & $module {
-            function script:Replace-NoNagFile {
-                param($Source,$Target,$Backup)
-                [IO.File]::Move($Target,$Backup)
-                throw 'Injected failure with target moved but replacement not installed.'
-            }
-        }
-        $result = Invoke-NoNagChange $dir $action
-        Assert-True (-not $result.Success) 'Partial replacement should fail'
-        $after = Get-NoNagState $dir
-        Assert-True ($after.Hash -eq $before.Hash -and $after.BackupHash -eq $before.BackupHash) 'Partial replacement rollback'
-        Pass "$action recovers when target is temporarily absent"
-    }
-
-    $dir = New-Case 'failed recovery'
-    & $module {
-        function script:Stop-TargetGui { param($Target) return $true }
-        function script:Replace-NoNagFile {
-            param($Source,$Target,$Backup)
-            $script:ReplaceCount++
-            if ($script:ReplaceCount -eq 1) { [IO.File]::Replace($Source,$Target,$Backup) }
-            throw 'Injected replacement and recovery failure.'
-        }
-    }
-    $result = Invoke-NoNagChange $dir Apply
-    Assert-True (-not $result.Success -and -not $result.Restart) 'Incomplete recovery must not restart'
-    Assert-True ($result.Message -like '*Recovery incomplete*') 'Recovery error disclosed'
-    Assert-True ((Get-NoNagState $dir).BackupHash -eq $originalHash) 'Recovery failure preserves original backup'
-    Pass 'Failed rollback preserves original and blocks restart'
-
-    $dir = New-Case 'locked target'
-    $handle = [IO.File]::Open((Join-Path $dir 'ProcessLasso.exe'), [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
-    try { Assert-Rejected { Invoke-NoNagChange $dir Apply } } finally { $handle.Dispose() }
-    Assert-True ((Get-NoNagState $dir).Hash -eq $originalHash) 'Locked executable preserved'
-    Pass 'Locked target refuses replacement'
-
-    $dir = New-Case 'concurrent tool'
-    $handle = [IO.File]::Open((Join-Path $dir 'ProcessLasso-NoNag.lock'), [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
-    try { Assert-Rejected { Invoke-NoNagChange $dir Apply } } finally { $handle.Dispose() }
-    Assert-True ((Get-NoNagState $dir).Hash -eq $originalHash) 'Concurrent tool leaves executable unchanged'
+    $dir=New-Case 'missing target during replace' -Legacy
+    $before=Snapshot $dir
+    & $module { $script:FailAt=1; $script:MissingTarget=$true; function script:Stop-TargetGui { return $true } }
+    $r=Invoke-NoNagChange $dir Enable
+    Assert (-not $r.Success -and $r.Restart -and (Snapshot $dir) -ceq $before) $r.Message
+    Pass 'Partial replacement with missing target is recovered'
+    $dir=New-Case 'recovery failure' -Legacy
+    & $module { $script:FailAt=1; $script:After=$true; $script:RecoveryFail=$true; function script:Stop-TargetGui { return $true } }
+    $r=Invoke-NoNagChange $dir Enable
+    Assert (-not $r.Success -and -not $r.Restart -and @(Get-ChildItem -LiteralPath $dir -Directory).Count -eq 1) $r.Message
+    Pass 'Incomplete recovery keeps files and blocks restart'
+    $dir=New-Case 'gui cancellation'
+    & $module { function script:Stop-TargetGui { throw 'Cancelled' } }
+    $before=Snapshot $dir
+    $r=Invoke-NoNagChange $dir Enable
+    Assert (-not $r.Success -and -not $r.Restart -and (Snapshot $dir) -ceq $before) $r.Message
+    Pass 'GUI cancellation leaves files unchanged'
+    $dir=New-Case 'updater race'
+    & $module { function script:Stop-TargetGui([string]$Target) { [IO.File]::WriteAllText($Target,'official updater replaced exe'); return $true } }
+    $r=Invoke-NoNagChange $dir Enable
+    Assert (-not $r.Success -and -not $r.Restart -and -not [IO.File]::Exists((Join-Path $dir 'version.dll'))) $r.Message
+    Pass 'Concurrent updater is preserved and restart blocked'
+    $dir=New-Case 'concurrent lock'
+    $lock=[IO.FileStream]::new((Join-Path $dir 'ProcessLasso-NoNag.lock'),[IO.FileMode]::CreateNew,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+    try { Rejected { Invoke-NoNagChange $dir Enable } } finally { $lock.Dispose() }
     Pass 'Concurrent operation refused'
-
-    $dir = New-Case 'restart intent'
-    & $module { function script:Stop-TargetGui { param($Target) return $true } }
-    $result = Invoke-NoNagChange $dir Apply
-    Assert-True ($result.Success -and $result.Restart) 'Running GUI should restart'
-    Pass 'Running GUI restart intent preserved'
-    $older = if ($OlderFixturePath) { [IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $OlderFixturePath).ProviderPath) } else { [byte[]]$original.Clone() }
-    if (-not $OlderFixturePath) { $older[0] = $older[0] -bxor 1 }
-    $olderHash = & $module { param($data) Get-DataHash $data } $older
-    if (-not $OlderFixturePath) { & $module {
-        param($hash)
-        $script:Profiles += @(@{ Version = '18.2.0.0'; OriginalHash = $hash; PatchedHash = 'unused'; Patches = @() })
-    } $olderHash }
-    foreach ($mode in @('success','before','after','partial','failed-recovery','cancel')) {
-        $dir = New-Case "older backup $mode"
-        [IO.File]::WriteAllBytes((Join-Path $dir 'ProcessLasso-Original.exe'), $older)
-        Assert-True ((Get-NoNagState $dir).CanApply) 'Known older original can be replaced'
-        & $module {
-            param($mode)
-            $script:FailureMode = $mode
-            function script:Stop-TargetGui {
-                param($Target)
-                if ($script:FailureMode -eq 'cancel') { throw 'Cancelled.' }
-                return $true
-            }
-            function script:Replace-NoNagFile {
-                param($Source,$Target,$Backup)
-                $script:ReplaceCount++
-                if ($script:FailureMode -eq 'before') { throw 'Before replacement.' }
-                if ($script:FailureMode -eq 'partial') { [IO.File]::Move($Target,$Backup); throw 'Partial replacement.' }
-                if ($script:FailureMode -eq 'failed-recovery' -and $script:ReplaceCount -gt 1) { throw 'Recovery failed.' }
-                [IO.File]::Replace($Source,$Target,$Backup)
-                if ($script:ReplaceCount -eq 1 -and $script:FailureMode -in @('after','failed-recovery')) { throw 'After replacement.' }
-            }
-        } $mode
-        $result = Invoke-NoNagChange $dir Apply
-        $state = Get-NoNagState $dir
-        if ($mode -eq 'success') {
-            Assert-True ($result.Success -and $state.Hash -eq $patchedHash -and $state.BackupHash -eq $originalHash) 'New original replaces older backup'
-            Assert-True (@(Get-ChildItem $dir).Count -eq 2) 'Older temporary backup removed'
-            Reset-Mocks
-            $restored = Invoke-NoNagChange $dir Restore
-            Assert-True ($restored.Success -and (Get-NoNagState $dir).Hash -eq $originalHash) 'Restore returns new original'
-        } elseif ($mode -eq 'failed-recovery') {
-            Assert-True (-not $result.Success -and -not $result.Restart -and $state.BackupHash -eq $originalHash) 'Failed recovery preserves new original and blocks restart'
-            $held = @(Get-ChildItem $dir -Filter '*.old.tmp')
-            Assert-True ($held.Count -eq 1 -and (Get-FileHash $held[0].FullName).Hash.ToLowerInvariant() -eq $olderHash) 'Failed recovery preserves old backup'
-        } else {
-            Assert-True (-not $result.Success -and $state.Hash -eq $originalHash -and $state.BackupHash -eq $olderHash) 'Failure restores both original files'
-            Assert-True (@(Get-ChildItem $dir).Count -eq 2) 'Recovered operation leaves no temporary files'
-        }
-        Pass "Older backup replacement: $mode"
-    }
-    $dir = New-Case 'same-version backup'
-    [IO.File]::WriteAllBytes((Join-Path $dir 'ProcessLasso-Original.exe'), $original)
-    Assert-Rejected { Invoke-NoNagChange $dir Apply }
-    Pass 'Same-version backup refused'
-    $dir = New-Case 'patched backup'
-    [IO.File]::WriteAllBytes((Join-Path $dir 'ProcessLasso-Original.exe'), $patched)
-    Assert-Rejected { Invoke-NoNagChange $dir Apply }
-    Pass 'Patched backup refused'
-    $future = [byte[]]$original.Clone()
-    $future[1] = $future[1] -bxor 1
-    $futureHash = & $module { param($data) Get-DataHash $data } $future
-    & $module {
-        param($hash)
-        $script:Profiles += @(@{ Version = '99.0.0.0'; OriginalHash = $hash; PatchedHash = 'unused-future'; Patches = @() })
-    } $futureHash
-    $dir = New-Case 'newer backup'
-    [IO.File]::WriteAllBytes((Join-Path $dir 'ProcessLasso-Original.exe'), $future)
-    Assert-Rejected { Invoke-NoNagChange $dir Apply }
-    Pass 'Known newer backup refused'
-    Write-Host "$script:count tests passed."
+    $dir=New-Case 'gui restarted'
+    & $module { function script:Get-TargetGui { 'running again' } }
+    $r=Invoke-NoNagChange $dir Enable
+    Assert (-not $r.Success -and -not [IO.File]::Exists((Join-Path $dir 'version.dll'))) $r.Message
+    Pass 'GUI relaunch during operation refused'
+    Write-Host "$script:count transaction tests passed."
 } finally {
-    $resolved = [IO.Path]::GetFullPath($testRoot)
-    $temp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
-    if ($resolved.StartsWith($temp, [StringComparison]::OrdinalIgnoreCase) -and [IO.Path]::GetFileName($resolved).StartsWith('NoNag-tests-')) {
-        Remove-Item -LiteralPath $resolved -Recurse -Force
-    }
-    Remove-Module $module
+    Remove-Item -LiteralPath $root -Recurse -Force
 }

@@ -1,0 +1,201 @@
+{
+  "References": [
+    {
+      "SourceHash": "2f6f1005b5d67a7e7468c66b106d45ac0e2537cbc82fb6b7edce3c89fe9a989a",
+      "Structure": {
+        "OfferCallbacks": [
+          "4cb661a6ba582f1027843ca5f2c3501f342c3a6e20519222af0632f08c9fe1ff",
+          "4cb661a6ba582f1027843ca5f2c3501f342c3a6e20519222af0632f08c9fe1ff"
+        ],
+        "OfferRoutes": [
+          "9cffd61e494fa7eb7340cbe4a156c6f80bc33a1e13cb0590e99bc1506ec1083e",
+          "c18933318b06bf7a5caf6d18e1cd2cda9689177c4407dbbf825063a31448e134"
+        ],
+        "OtherReminderRoutes": [
+          "56c14d1b2a48f24c3e8cf5c5d9080fb286ef4ba271a9b4b0fcfd6fa66aa956391c19acee33d4a1cc7fcc26d87f54cfb1666e12d8d90d0a661a677746f0ab6641",
+          "c282c966ce95d977a2d98b2634d197371e69213284aeb7c1a5e94a06e1766ac0ded8e85705d41b81ed2bd3bc159f785ec52c8eb8079fd199676394e488a3f6d4"
+        ],
+        "ReminderCallback": "1c19acee33d4a1cc7fcc26d87f54cfb1666e12d8d90d0a661a677746f0ab6641",
+        "ReminderCallers": [
+          {
+            "Body": 462,
+            "Context": "079712e79fafd3485131dfc7a4e8647689db807eddfb24597e66a6f27c9153f7"
+          },
+          {
+            "Body": 462,
+            "Context": "082f82a4f5dd782e0573bcc4a00543d89800efef0e7a496ec15f6dd5443ae548"
+          },
+          {
+            "Body": 462,
+            "Context": "33ef43bd66feb19f9cf8aefcecc3238bf63451ce0523c439bb23b8d46e7c4b76"
+          },
+          {
+            "Body": 462,
+            "Context": "50d33b64d4b130d6e3d4c60677b92794ded36133ff500acba88099bb31ff2022"
+          },
+          {
+            "Body": 462,
+            "Context": "6ba4fe68995b1595cab2e750998e30b3a2647746f46088b3dc20a68fa056333d"
+          },
+          {
+            "Body": 462,
+            "Context": "6e1150d3584262f9b5d09d2e99d57d240c344595fb3e5260c31bc549e7812f11"
+          },
+          {
+            "Body": 462,
+            "Context": "7498d967a0fbc31bba6e529b0f6478479d86436d907b02b2e680483487562896"
+          },
+          {
+            "Body": 462,
+            "Context": "85811e78af32c9c04de9ec0e0b3eec14229c392d6d701b4c6f3d2d5d94ca933a"
+          },
+          {
+            "Body": 462,
+            "Context": "859590a371dc4e1c121cb16859efb95f7b7e3087c46d9e771886d42f18637e2d"
+          },
+          {
+            "Body": 462,
+            "Context": "c3cf71b92d884c11b5bcc959ac7403cf91cb6e00d4a4ddf9de76d8ca373237da"
+          },
+          {
+            "Body": 462,
+            "Context": "e229c5f117fccda93d1cd0c38d591855f5afcfd0db3b0cf1ebdb647532ace781"
+          },
+          {
+            "Body": 462,
+            "Context": "e7418aaf6cfa938e9a2cf64bb10bcf015bc649019747c63acaeecaf0f3913d82"
+          },
+          {
+            "Body": 462,
+            "Context": "f3ee2dcb2fb8a6a06a1cc95e9c9aed16e556ca28688914a3464bc296b654b196"
+          },
+          {
+            "Body": 462,
+            "Context": "f81d4acf3bfb30b7748fceb3820996e805814aa66a8d085debf1e225e2aad48d"
+          },
+          {
+            "Body": 462,
+            "Context": "ff63ab3c6e85ac7c649f13979f959aebb32dd65f541cebdddfc5375aefc792af"
+          },
+          {
+            "Body": 657,
+            "Context": "1a87089b47e971386d53e8c2f7005d129be04d18068be758bc8a3c84ba69f040"
+          },
+          {
+            "Body": 657,
+            "Context": "e5e1ea980603d826d07e2cfe078c020889fe4a7213af6162b331041efae79305"
+          },
+          {
+            "Body": 657,
+            "Context": "ef33ad4f84e63c4a08bf344761a79e0827211b5191e38eef9e20054fbc47ac5a"
+          }
+        ],
+        "ReminderHelper": "c364196271395e6a9167287af3ad062c57b978e8a30aa4b430621041dcba3bf6",
+        "Resources": {
+          "offer": "56880c24fe193a3c6d3fb5c69469f9d893a4e913ae44aed13c9d74daf275de91",
+          "reminder": "c7e4094d6768eabb5f136ee46e919c2c8a7a9a3df4f653efc12a3bdd5761227a"
+        }
+      },
+      "Version": "18.3.0.34"
+    },
+    {
+      "SourceHash": "3643982a58b21712add1b4c806412c48fec54b7ded78ec4e782e5bb8480cae2b",
+      "Structure": {
+        "OfferCallbacks": [
+          "d39f955cc607f5889d9e62d698cc695284fc223e6ec15c2496936128f36b8add",
+          "d39f955cc607f5889d9e62d698cc695284fc223e6ec15c2496936128f36b8add"
+        ],
+        "OfferRoutes": [
+          "9cffd61e494fa7eb7340cbe4a156c6f80bc33a1e13cb0590e99bc1506ec1083e",
+          "c18933318b06bf7a5caf6d18e1cd2cda9689177c4407dbbf825063a31448e134"
+        ],
+        "OtherReminderRoutes": [
+          "56c14d1b2a48f24c3e8cf5c5d9080fb286ef4ba271a9b4b0fcfd6fa66aa95639b3967136c863449cc8b171bfa7a990402f5df4b9ead88bbcd5ddd79a3c9ed012",
+          "c282c966ce95d977a2d98b2634d197371e69213284aeb7c1a5e94a06e1766ac07c84bf289bbd44c62541fa8b15efca645f10e11964aea2489bdb276d7d85d243"
+        ],
+        "ReminderCallback": "b3967136c863449cc8b171bfa7a990402f5df4b9ead88bbcd5ddd79a3c9ed012",
+        "ReminderCallers": [
+          {
+            "Body": 462,
+            "Context": "079712e79fafd3485131dfc7a4e8647689db807eddfb24597e66a6f27c9153f7"
+          },
+          {
+            "Body": 462,
+            "Context": "082f82a4f5dd782e0573bcc4a00543d89800efef0e7a496ec15f6dd5443ae548"
+          },
+          {
+            "Body": 462,
+            "Context": "33ef43bd66feb19f9cf8aefcecc3238bf63451ce0523c439bb23b8d46e7c4b76"
+          },
+          {
+            "Body": 462,
+            "Context": "3d49c3f9dc97e9a49326011f1bf635d5239d1b7ccff1b5cd7effb142275ac627"
+          },
+          {
+            "Body": 462,
+            "Context": "50d33b64d4b130d6e3d4c60677b92794ded36133ff500acba88099bb31ff2022"
+          },
+          {
+            "Body": 462,
+            "Context": "6e1150d3584262f9b5d09d2e99d57d240c344595fb3e5260c31bc549e7812f11"
+          },
+          {
+            "Body": 462,
+            "Context": "7498d967a0fbc31bba6e529b0f6478479d86436d907b02b2e680483487562896"
+          },
+          {
+            "Body": 462,
+            "Context": "85811e78af32c9c04de9ec0e0b3eec14229c392d6d701b4c6f3d2d5d94ca933a"
+          },
+          {
+            "Body": 462,
+            "Context": "859590a371dc4e1c121cb16859efb95f7b7e3087c46d9e771886d42f18637e2d"
+          },
+          {
+            "Body": 462,
+            "Context": "c3cf71b92d884c11b5bcc959ac7403cf91cb6e00d4a4ddf9de76d8ca373237da"
+          },
+          {
+            "Body": 462,
+            "Context": "e229c5f117fccda93d1cd0c38d591855f5afcfd0db3b0cf1ebdb647532ace781"
+          },
+          {
+            "Body": 462,
+            "Context": "e7418aaf6cfa938e9a2cf64bb10bcf015bc649019747c63acaeecaf0f3913d82"
+          },
+          {
+            "Body": 462,
+            "Context": "f3ee2dcb2fb8a6a06a1cc95e9c9aed16e556ca28688914a3464bc296b654b196"
+          },
+          {
+            "Body": 462,
+            "Context": "f81d4acf3bfb30b7748fceb3820996e805814aa66a8d085debf1e225e2aad48d"
+          },
+          {
+            "Body": 462,
+            "Context": "ff63ab3c6e85ac7c649f13979f959aebb32dd65f541cebdddfc5375aefc792af"
+          },
+          {
+            "Body": 657,
+            "Context": "1a87089b47e971386d53e8c2f7005d129be04d18068be758bc8a3c84ba69f040"
+          },
+          {
+            "Body": 657,
+            "Context": "85874daa91e49beb09c4f354fe526345bc0b08b786a5b65b1a2305e0b3d5698a"
+          },
+          {
+            "Body": 657,
+            "Context": "e5e1ea980603d826d07e2cfe078c020889fe4a7213af6162b331041efae79305"
+          }
+        ],
+        "ReminderHelper": "c364196271395e6a9167287af3ad062c57b978e8a30aa4b430621041dcba3bf6",
+        "Resources": {
+          "offer": "56880c24fe193a3c6d3fb5c69469f9d893a4e913ae44aed13c9d74daf275de91",
+          "reminder": "c7e4094d6768eabb5f136ee46e919c2c8a7a9a3df4f653efc12a3bdd5761227a"
+        }
+      },
+      "Version": "18.4.0.48"
+    }
+  ],
+  "Schema": 1
+}

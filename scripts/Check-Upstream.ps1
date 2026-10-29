@@ -5,17 +5,19 @@ param(
     [string]$MetadataPath,
     [string]$SevenZipPath = 'C:\Program Files\7-Zip\7z.exe',
     [string]$PythonPath = 'python',
-    [switch]$SkipAnalysis
+    [string]$DevelopmentDll
 )
 Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference='Stop'
 Import-Module (Join-Path $PSScriptRoot 'Upstream.psm1') -Force
-$root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-if (-not $OutputDirectory) { $OutputDirectory = Join-Path $root 'dist/upstream' }
-$null=New-Item -ItemType Directory -Force $OutputDirectory
+$root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+if (-not $OutputDirectory) { $OutputDirectory=Join-Path $root 'dist/upstream' }
+$OutputDirectory=[IO.Path]::GetFullPath($OutputDirectory)
 $work=Join-Path $OutputDirectory ([guid]::NewGuid().ToString('N'))
-$null=New-Item -ItemType Directory $work
-$report=@{ Status='error'; Version=''; ExecutableHash=''; InstallerHash=''; Reason=''; ErrorKey=''; CheckedAt=[DateTime]::UtcNow.ToString('o') }
+$null=[IO.Directory]::CreateDirectory($work)
+$report=@{ Schema=3; Status='error'; Version=''; ExecutableHash=''; InstallerHash=''; DllHash=''; NoNagRelease='';
+    Development=[bool]$DevelopmentDll; Reason=''; ErrorKey=''; CheckerRevision=(Get-CheckerRevision);
+    SourceRevision=$env:GITHUB_SHA; CheckedAt=[DateTime]::UtcNow.ToString('o') }
 $stage='metadata'
 try {
     $html=if ($MetadataPath) { [IO.File]::ReadAllText($MetadataPath) } else { (Invoke-WebRequest 'https://bitsum.com/download-process-lasso/' -UseBasicParsing -TimeoutSec 60).Content }
@@ -32,45 +34,39 @@ try {
     & $SevenZipPath e $installer 'ProcessLasso.exe' 'pl_rsrc_english.dll' "-o$work" -y | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Extraction failed.' }
     $exe=Join-Path $work 'ProcessLasso.exe'
+    $resource=Join-Path $work 'pl_rsrc_english.dll'
     $stage='executable-verification'
     Assert-BitsumSignature $exe
-    $data=[IO.File]::ReadAllBytes($exe)
-    if ($data.Length -lt 256 -or $data[0] -ne 0x4D -or $data[1] -ne 0x5A) { throw 'Invalid executable.' }
-    $pe=[BitConverter]::ToInt32($data,0x3C)
-    if ($pe -lt 0 -or $pe+26 -gt $data.Length -or [BitConverter]::ToUInt32($data,$pe) -ne 0x4550 -or [BitConverter]::ToUInt16($data,$pe+4) -ne 0x8664 -or [BitConverter]::ToUInt16($data,$pe+24) -ne 0x20B) { throw 'Expected x64 PE executable.' }
-    $info=[Diagnostics.FileVersionInfo]::GetVersionInfo($exe)
-    $version='{0}.{1}.{2}.{3}' -f $info.FileMajorPart,$info.FileMinorPart,$info.FileBuildPart,$info.FilePrivatePart
-    if ($version -cne $release.Version) { throw 'Executable version differs from official metadata.' }
-    $stage='static-check'
-    $result=Get-StaticResult $data (Join-Path $root 'src/NoNag.psm1')
-    foreach ($key in $result.Keys) { $report[$key]=$result[$key] }
-    if ($report.Status -eq 'pass') {
-        $stage='transaction-test'
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'tests/Test-NoNag.ps1') -FixturePath $exe
-        if ($LASTEXITCODE -ne 0) { throw 'Fixture transaction tests failed.' }
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'tests/Test-WorkerExitCodes.ps1')
-        if ($LASTEXITCODE -ne 0) { throw 'Worker tests failed.' }
-    } elseif (-not $SkipAnalysis) {
-        $stage='analysis'
-        $analysisPath=Join-Path $OutputDirectory 'analysis.json'
-        & $PythonPath (Join-Path $PSScriptRoot 'analyze_patch.py') analyze --exe $exe --resources (Join-Path $work 'pl_rsrc_english.dll') --output $analysisPath
-        if ($LASTEXITCODE -ne 0) { throw 'Analyzer failed.' }
-        $analysis=[IO.File]::ReadAllText($analysisPath) | ConvertFrom-Json
-        $report.Analysis=$analysis
-        if ($analysis.Status -eq 'candidate') {
-            $stage='candidate-validation'
-            & (Join-Path $PSScriptRoot 'Prepare-Candidate.ps1') -AnalysisPath $analysisPath -ExecutablePath $exe -OutputDirectory $OutputDirectory
-            $report.CandidateValidated=$true
-        }
-    } else {
-        $report.Analysis=@{ Status='inconclusive'; Reason='Analysis skipped by manual request.'; AnalyzerHash=('0'*64) }
+    Assert-BitsumSignature $resource
+    foreach ($path in @($exe,$resource)) {
+        $info=[Diagnostics.FileVersionInfo]::GetVersionInfo($path)
+        $version='{0}.{1}.{2}.{3}' -f $info.FileMajorPart,$info.FileMinorPart,$info.FileBuildPart,$info.FilePrivatePart
+        if ($version -cne $release.Version) { throw 'File version differs from official metadata.' }
     }
+    $report.ExecutableHash=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+    $stage='published-dll'
+    if ($DevelopmentDll) {
+        $dll=[IO.Path]::GetFullPath($DevelopmentDll)
+        $report.NoNagRelease='development'
+    } else {
+        $payload=& (Join-Path $PSScriptRoot 'Get-PublishedDll.ps1') -Directory (Join-Path $work 'published')
+        $dll=$payload.Path
+        $report.NoNagRelease=$payload.Release
+    }
+    $report.DllHash=(Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash.ToLowerInvariant()
+    $stage='compatibility'
+    $analysisPath=Join-Path $OutputDirectory 'compatibility.json'
+    & $PythonPath (Join-Path $PSScriptRoot 'check_compatibility.py') --exe $exe --resources $resource --dll $dll --build (Join-Path $root 'build') --output $analysisPath
+    if ($LASTEXITCODE -ne 0) { throw 'Compatibility checker failed.' }
+    $result=[IO.File]::ReadAllText($analysisPath) | ConvertFrom-Json
+    foreach ($key in @('Status','Reason','ExecutableHash','DllHash','CheckerRevision','Environment','SourceRevision')) { $report[$key]=$result.$key }
 } catch {
     $report.Status='error'; $report.ErrorKey=$stage; $report.Reason="Check failed at stage: $stage."
+} finally {
+    [IO.File]::WriteAllText((Join-Path $OutputDirectory 'report.json'),($report | ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false))
+    if ([IO.Directory]::Exists($work)) { [IO.Directory]::Delete($work,$true) }
 }
-[IO.File]::WriteAllText((Join-Path $OutputDirectory 'report.json'),($report | ConvertTo-Json -Depth 30),[Text.UTF8Encoding]::new($false))
-$summary="## Upstream static check`n`nStatus: $($report.Status)`n`nVersion: $($report.Version)`n`n$($report.Reason)`n`nExecutable SHA-256: $($report.ExecutableHash)`n"
-if ($report.ContainsKey('Analysis')) { $summary+="`nAnalysis: $($report.Analysis.Status)`n`n$($report.Analysis.Reason)`n" }
+$summary="## Upstream compatibility check`n`nStatus: $($report.Status)`n`nProcess Lasso: $($report.Version)`n`nNoNag: $($report.NoNagRelease)`n`n$($report.Reason)`n"
 if ($env:GITHUB_STEP_SUMMARY) { Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $summary }
 Write-Output $summary
 if ($report.Status -eq 'error') { exit 1 }

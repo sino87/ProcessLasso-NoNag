@@ -1,8 +1,5 @@
 {
-  "AnalysisOutcomes": {},
-  "Candidates": {},
+  "Schema": 3,
   "EventsDelivered": [],
-  "LastError": "",
-  "NotifiedHashes": [],
-  "Schema": 2
+  "LastFailure": ""
 }
