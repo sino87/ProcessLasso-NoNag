@@ -6,7 +6,7 @@ Requires x64 Process Lasso and Windows PowerShell 5.1.
 
 | Check | Last checked version |
 |---|---|
-| Automated Compatibility Check | - |
+| Automated Compatibility Check | Process Lasso 18.4.0.48 x64 |
 | Manual Check | Process Lasso 18.4.0.48 x64 |
 
 ## Usage
