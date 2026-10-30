@@ -3,11 +3,14 @@ param([Parameter(Mandatory=$true)][string]$Directory, [string]$Repository=$env:G
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 if ($Repository -cnotmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') { throw 'Invalid repository.' }
-$text = & gh api "repos/$Repository/releases/latest"
+$text = & gh api "repos/$Repository/releases?per_page=100" --paginate --slurp
 if ($LASTEXITCODE -ne 0) { throw 'Published release unavailable.' }
-$release = ($text -join "`n") | ConvertFrom-Json
+$pages = ($text -join "`n") | ConvertFrom-Json
+$published = @(foreach ($page in $pages) { foreach ($item in $page) { if (-not $item.draft) { $item } } })
+$release = $published | Sort-Object { [DateTimeOffset]$_.published_at } -Descending | Select-Object -First 1
+if (-not $release) { throw 'Published release unavailable.' }
 $tag = $release.tag_name
-if ($release.draft -or $release.prerelease -or $tag -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?$') { throw 'Expected a published stable release.' }
+if ($tag -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?$') { throw 'Expected a published versioned release.' }
 $name = "ProcessLasso-NoNag-$tag.zip"
 $null = [IO.Directory]::CreateDirectory($Directory)
 & gh release download $tag --repo $Repository --pattern $name --pattern SHA256SUMS.txt --dir $Directory
