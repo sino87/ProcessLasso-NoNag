@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import patch
 
 import pefile
+from capstone import Cs, CS_ARCH_X86, CS_MODE_64
 sys.path.insert(0,str(pathlib.Path(__file__).parents[1]/'scripts'))
 import check_compatibility as compatibility
 from pe_image import Image, Inconclusive
@@ -19,6 +20,47 @@ ROOT=pathlib.Path(__file__).parents[1]
 BUILD=ROOT/'build'
 DLL=ROOT/'bin/version.dll'
 HARNESS=BUILD/'tests/native/Release/dialog_harness.exe'
+
+
+class CallbackTests(unittest.TestCase):
+    def image(self, start=0x1000, targets=(24, 30), jump=b'\xff\xe1', truncate=False):
+        code = (b'\x83\xfb\x01\x77\x19\x48\x8d\x15'+struct.pack('<i', -(start+12))
+                +b'\x8b\x8c\x9a'+struct.pack('<i', start+36)+b'\x48\x03\xca'+jump
+                +b'\xb8\x01\x00\x00\x00\xc3\xb8\x02\x00\x00\x00\xc3'
+                +b''.join(struct.pack('<I', start+target) for target in targets))
+        image = Image.__new__(Image)
+        image.base = 0x140000000
+        image.functions = [(start, start+len(code))]
+        image.starts = [start]
+        image.md = Cs(CS_ARCH_X86, CS_MODE_64)
+        image.md.detail = True
+        image.imports = {}
+        image.pe = types.SimpleNamespace(
+            get_data=lambda rva,size:code[rva-start:rva-start+size] if not (truncate and rva==start+36) else b'',
+            get_section_by_rva=lambda rva:types.SimpleNamespace(Characteristics=0x20000000),
+        )
+        return image
+
+    def normalized(self, image):
+        return image.normalize_callback(image.base+image.starts[0])
+
+    def test_table_relocation_preserves_callback(self):
+        self.assertEqual(self.normalized(self.image()), self.normalized(self.image(start=0x2000)))
+
+    def test_table_targets_are_compared(self):
+        self.assertNotEqual(self.normalized(self.image()), self.normalized(self.image(targets=(30, 24))))
+
+    def test_table_bytes_are_not_decoded_as_jumps(self):
+        self.assertEqual(self.normalized(self.image()), self.normalized(self.image(start=0x1e0ff-24)))
+
+    def test_invalid_or_missing_table_requires_review(self):
+        for image in (self.image(targets=(25, 30)), self.image(truncate=True)):
+            with self.subTest(image=image), self.assertRaises(Inconclusive):
+                self.normalized(image)
+
+    def test_unknown_indirect_jump_requires_review(self):
+        with self.assertRaisesRegex(Inconclusive, 'indirect-jump'):
+            self.normalized(self.image(jump=b'\xff\xe0'))
 
 
 @unittest.skipUnless(HARNESS.exists() and DLL.exists(),'Build native tooling first')
@@ -75,7 +117,7 @@ class RealCompatibilityTests(unittest.TestCase):
         self.reference=json.loads((ROOT/'scripts/compatibility-reference.json').read_text())
 
     def test_reviewed_originals_and_real_dialog_resources(self):
-        for version in ('18.3.0.34','18.4.0.48'):
+        for version in ('18.3.0.34','18.4.0.48','19.0.0.94'):
             with self.subTest(version=version):
                 directory=self.fixtures/version
                 result=compatibility.check(directory/'ProcessLasso.exe',directory/'pl_rsrc_english.dll',DLL,BUILD,self.reference)
@@ -116,6 +158,31 @@ class RealCompatibilityTests(unittest.TestCase):
             resource.write_bytes(data)
             with self.assertRaisesRegex(Inconclusive,'structure-or-resources'):
                 compatibility.check(directory/'ProcessLasso.exe',resource,DLL,BUILD,self.reference)
+
+    def test_changed_switch_target_requires_review(self):
+        directory=self.fixtures/'19.0.0.94'
+        source=directory/'ProcessLasso.exe'
+        data=bytearray(source.read_bytes())
+        pe=pefile.PE(data=data)
+        offset=pe.get_offset_from_rva(0xd818)
+        struct.pack_into('<I', data, offset, 0xcbf0)
+        with tempfile.TemporaryDirectory() as folder:
+            changed=pathlib.Path(folder)/'ProcessLasso.exe'
+            changed.write_bytes(data)
+            with self.assertRaisesRegex(Inconclusive, 'structure-or-resources'):
+                compatibility.check(changed,directory/'pl_rsrc_english.dll',DLL,BUILD,self.reference)
+
+    def test_changed_reminder_body_requires_review(self):
+        directory=self.fixtures/'19.0.0.94'
+        source=directory/'ProcessLasso.exe'
+        data=source.read_bytes()
+        body=bytes.fromhex('41b891020000')
+        self.assertIn(body, data)
+        with tempfile.TemporaryDirectory() as folder:
+            changed=pathlib.Path(folder)/'ProcessLasso.exe'
+            changed.write_bytes(data.replace(body, bytes.fromhex('41b8ce010000'), 1))
+            with self.assertRaises(Inconclusive):
+                compatibility.check(changed,directory/'pl_rsrc_english.dll',DLL,BUILD,self.reference)
 
 
 if __name__=='__main__': unittest.main()

@@ -6,7 +6,7 @@ import struct
 
 import pefile
 from capstone import Cs, CS_ARCH_X86, CS_MODE_64, CS_GRP_CALL, CS_GRP_JUMP
-from capstone.x86 import X86_OP_IMM, X86_OP_MEM, X86_OP_REG, X86_REG_RIP, X86_REG_RSP, X86_REG_RBP
+from capstone.x86 import X86_OP_IMM, X86_OP_MEM, X86_OP_REG, X86_REG_RIP, X86_REG_RSP, X86_REG_RBP, X86_REG_EBX, X86_REG_ECX, X86_REG_RBX, X86_REG_RCX, X86_REG_RDX
 
 MAX_SIZE = 32 * 1024 * 1024
 
@@ -105,6 +105,57 @@ class Image:
             except UnicodeError:
                 pass
         return None
+
+    def normalize_callback(self, address):
+        start, end = self.function(address)
+        if address != self.base+start or not self.executable(address):
+            raise Inconclusive('dialog-callback-unresolved')
+        instructions = list(self.md.disasm(self.pe.get_data(start, end-start), address))
+        tables = []
+        for index, jump in enumerate(instructions):
+            if tables and jump.address >= tables[0][1]:
+                break
+            if jump.mnemonic != 'jmp' or jump.operands[0].type == X86_OP_IMM:
+                continue
+            if index < 5:
+                raise Inconclusive('callback-indirect-jump-requires-review')
+            compare, guard, base, load, add = instructions[index-5:index]
+            if not (
+                compare.mnemonic == 'cmp' and compare.operands[0].type == X86_OP_REG and compare.operands[0].reg == X86_REG_EBX
+                and compare.operands[1].type == X86_OP_IMM and 0 <= compare.operands[1].imm < 256
+                and guard.mnemonic == 'ja' and guard.operands[0].type == X86_OP_IMM
+                and base.mnemonic == 'lea' and base.operands[0].type == X86_OP_REG and base.operands[0].reg == X86_REG_RDX
+                and base.operands[1].type == X86_OP_MEM and base.operands[1].mem.base == X86_REG_RIP
+                and base.address+base.size+base.operands[1].mem.disp == self.base
+                and load.mnemonic == 'mov' and load.operands[0].type == X86_OP_REG and load.operands[0].reg == X86_REG_ECX
+                and load.operands[1].type == X86_OP_MEM and load.operands[1].size == 4
+                and load.operands[1].mem.base == X86_REG_RDX and load.operands[1].mem.index == X86_REG_RBX
+                and load.operands[1].mem.scale == 4
+                and add.mnemonic == 'add' and add.operands[0].type == X86_OP_REG and add.operands[1].type == X86_OP_REG
+                and add.operands[0].reg == X86_REG_RCX and add.operands[1].reg == X86_REG_RDX
+                and jump.operands[0].type == X86_OP_REG and jump.operands[0].reg == X86_REG_RCX
+            ):
+                raise Inconclusive('callback-indirect-jump-requires-review')
+            table = load.operands[1].mem.disp
+            count = compare.operands[1].imm+1
+            if table < jump.address+jump.size-self.base or table+count*4 != end or tables:
+                raise Inconclusive('callback-switch-layout-requires-review')
+            raw = self.pe.get_data(table, count*4)
+            if len(raw) != count*4:
+                raise Inconclusive('callback-switch-table-incomplete')
+            targets = [self.base+value for value in struct.unpack('<'+'I'*count, raw)]
+            tables.append((load.address, self.base+table, targets))
+        if tables:
+            instructions = [ins for ins in instructions if ins.address < tables[0][1]]
+        positions = {ins.address:index for index, ins in enumerate(instructions)}
+        tokens = self.normalize(instructions)
+        for load, table, targets in tables:
+            if any(target not in positions for target in targets):
+                raise Inconclusive('callback-switch-target-invalid')
+            if any(ins.address < table < ins.address+ins.size for ins in instructions):
+                raise Inconclusive('callback-switch-overlaps-code')
+            tokens[positions[load]][1][1][1] = ['image-switch', 'rdx', 'rbx', 4, [positions[target] for target in targets]]
+        return tokens
 
     def normalize(self, instructions):
         positions = {ins.address: i for i, ins in enumerate(instructions)}

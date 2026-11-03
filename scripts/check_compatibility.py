@@ -1,4 +1,5 @@
 import argparse
+import collections
 import hashlib
 import importlib.metadata
 import json
@@ -60,31 +61,31 @@ def structure(image, resources):
                 continue
             if template in (0xc3, 0x13bf):
                 callback = argument(instructions, index, {'r9', 'r9d'}, address=True)
-                callback_bounds = image.function(callback)
-                callback_instructions = list(image.md.disasm(image.pe.get_data(callback_bounds[0],callback_bounds[1]-callback_bounds[0]),image.base+callback_bounds[0]))
-                if callback_instructions[0].address != callback or not image.executable(callback):
-                    raise Inconclusive('dialog-callback-unresolved')
-                dialogs.append((template, bounds, index, fingerprint(image, callback_instructions)))
+                dialogs.append((template, bounds, index, digest(canonical(image.normalize_callback(callback)))))
     reminders = [d for d in dialogs if d[0] == 0xc3]
     offers = [d for d in dialogs if d[0] == 0x13bf]
     if len(reminders) != 3 or len(offers) != 2:
         raise Inconclusive('dialog-route-count-changed')
-    direct_targets = [ins.operands[0].imm for instructions in decoded.values() for ins in instructions
-                      if ins.mnemonic == 'call' and ins.operands[0].type == X86_OP_IMM]
-    helpers = [d for d in reminders if direct_targets.count(image.base+d[1][0]) == 18]
-    if len(helpers) != 1:
-        raise Inconclusive('reminder-helper-unresolved')
-    helper = helpers[0][1]
-    callers = []
+    direct_callers = collections.defaultdict(list)
     for instructions in decoded.values():
         for index, instruction in enumerate(instructions):
-            if instruction.mnemonic == 'call' and instruction.operands[0].type == X86_OP_IMM and instruction.operands[0].imm == image.base+helper[0]:
+            if instruction.mnemonic == 'call' and instruction.operands[0].type == X86_OP_IMM:
+                direct_callers[instruction.operands[0].imm].append((instructions, index))
+    helpers = []
+    for dialog in reminders:
+        callers = []
+        try:
+            for instructions, index in direct_callers[image.base+dialog[1][0]]:
                 body = argument(instructions, index, {'r8', 'r8d', 'r8w', 'r8b'})
-                if body not in (0x291, 0x1ce):
-                    raise Inconclusive('reminder-body-role-changed')
-                callers.append({'Body': body, 'Context': fingerprint(image, instructions[max(0,index-7):index+3])})
-    if sum(c['Body'] == 0x291 for c in callers) != 3 or sum(c['Body'] == 0x1ce for c in callers) != 15:
-        raise Inconclusive('reminder-caller-count-changed')
+                callers.append({'Body':body, 'Context':fingerprint(image, instructions[max(0,index-7):index+3])})
+        except Inconclusive:
+            continue
+        if {caller['Body'] for caller in callers} == {0x291, 0x1ce}:
+            helpers.append((dialog, callers))
+    if len(helpers) != 1:
+        raise Inconclusive('reminder-helper-unresolved')
+    helper_dialog, callers = helpers[0]
+    helper = helper_dialog[1]
     resource_pe = pefile.PE(data=resources.read_bytes())
     if resource_pe.FILE_HEADER.Machine != 0x8664:
         raise Inconclusive('resources-not-x64')
@@ -94,7 +95,7 @@ def structure(image, resources):
     return {
         'Resources': resource_roles(resources, image.version),
         'ReminderHelper': fingerprint(image, decoded[helper]),
-        'ReminderCallback': helpers[0][3],
+        'ReminderCallback': helper_dialog[3],
         'OtherReminderRoutes': sorted(fingerprint(image,decoded[b][max(0,i-7):i+3])+callback for _,b,i,callback in reminders if b != helper),
         'OfferCallbacks': sorted(d[3] for d in offers),
         'OfferRoutes': sorted(fingerprint(image, decoded[b][max(0,i-7):i+3]) for _,b,i,_ in offers),

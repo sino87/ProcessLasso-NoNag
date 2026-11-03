@@ -2,43 +2,43 @@
 
 ## DLL behavior
 
-Process Lasso loads `version.dll` from its own directory. The proxy forwards 17 VERSION exports by name and ordinal to the System32 DLL, using its full path. x64 assembly thunks preserve argument registers and the caller's stack, including calls to the undocumented `GetFileVersionInfoByHandle` export. System DLLs are not bundled.
+Process Lasso loads the local `version.dll`. NoNag forwards Windows VERSION calls to the System32 DLL and hooks `ProcessLasso.exe`'s `DialogBoxParamW` import in memory. Other process names receive VERSION forwarding only.
 
-The proxy resolves the real VERSION module on the first forwarded call. `DllMain` only inspects the loaded image and replaces one import slot, without loading another DLL or waiting for a worker. VERSION calls from another DLL's initialization routine have not been tested.
+`DllMain` installs the hook without loading another DLL or waiting for a worker. VERSION forwarding is resolved on first use. Calls from another DLL's initialization routine have not been tested.
 
-In memory, the hook changes only `ProcessLasso.exe`'s `DialogBoxParamW` import. Dialog suppression requires a callback in the main image and a `pl_rsrc_*.dll` in the same directory:
+Suppression requires a callback in the main EXE and a matching dialog resource in a `pl_rsrc_*.dll` in the same directory:
 
 | Dialog | Additional condition | Result |
 |---|---|---|
-| `0xC3` | Readable reminder record: body `0x291`, nonnegative delay at offset 16, readable text pointer | Return `1` |
-| `0x13BF` | Resource exists | Return `1` |
+| `0xC3` | Readable reminder record and text pointer, body `0x291`, nonnegative delay | Suppress |
+| `0x13BF` | No additional conditions | Suppress |
 | Other calls | Includes body `0x1CE` (feature unavailable) | Forward unchanged |
 
-The hook also suppresses matching purchase dialogs opened with `/nag`. Licensing, activation and feature restrictions are unchanged. For other process names, the proxy only forwards VERSION calls.
+Matching dialogs opened with `/nag` are also suppressed. Licensing, activation and feature restrictions are unchanged.
 
 ## Installation and migration
 
 The CLI requires a valid Bitsum-signed x64 executable or a legacy patched executable with an exact registered hash. A new hash alone does not block a future signed version.
 
-`src/known-files.json` identifies the original and patched EXEs from 18.3.0.34 and 18.4.0.48, plus previous NoNag DLLs. The CLI verifies the current DLL against the distribution manifest. Add known older DLL hashes before publishing an upgrade.
+Legacy EXEs and previous DLLs are identified by hashes in `src/known-files.json`. The supplied DLL is checked against its distribution manifest.
 
-Legacy migration requires the matching original backup. After a Process Lasso update, the CLI removes verified older backups without replacing the newer executable. Unknown or newer backups are kept and block the operation.
+Migration from v0.1.1 and earlier requires the matching `ProcessLasso-Original.exe`. Verified older backups left by a Process Lasso update are removed without replacing the newer EXE. An unknown DLL or an unknown/newer backup is left untouched and blocks the operation.
 
-The CLI locks the directory, stages files, replaces them atomically and rolls back failed changes. If recovery fails, it keeps the temporary directory and blocks automatic restart. Only the GUI is closed; the core engine keeps running. `Enabled` confirms DLL installation, not suppression in a running application.
+File changes use a directory lock, staging, atomic replacement and rollback. If recovery is incomplete, keep the reported temporary directory; automatic restart is blocked. Only the GUI is closed; the core engine keeps running.
+
+`Enabled` means the DLL is installed. It does not confirm suppression in the running application.
 
 ## Automated checks
 
-The workflow's daily and manual runs verify official installer checksums and Bitsum signatures, then check the latest published NoNag DLL against the extracted x64 EXE and English resources:
+The workflow verifies official installer checksums and Bitsum signatures, then tests the latest published NoNag DLL with the extracted x64 EXE and English resources. It checks:
 
 1. Required VERSION exports and imports.
-2. Dialog helper, callbacks, callers, record layout and resource roles, compared with reviewed normalized structural fingerprints.
-3. Proxy ownership of the VERSION and dialog imports in an isolated executable copy stopped before application entry. Nonempty TLS callback arrays require review and are never allowed to run.
+2. Dialog code, call arguments, record layout and resource roles against reviewed structural fingerprints.
+3. DLL loading and import hooks in an EXE copy stopped before application entry. Application TLS callbacks require review and are not allowed to run.
 4. Native dialog and VERSION forwarding tests with the extracted resources.
 
-The workflow selects NoNag releases by publication date, including prereleases and excluding drafts.
+An EXE hash change alone does not fail compatibility. Unrecognized structures or control flow produce `review`; acquisition, signature or tooling failures produce `error`. These checks cover reviewed dialog paths and still require manual application testing.
 
-An EXE hash change alone does not fail compatibility. Structural differences produce `review`; acquisition, signature or tooling failures produce `error`. The checks cover reviewed dialog display paths. Manual application testing is still needed.
-
-The automated README row is updated only when a published-release check passes. Development results are not published. Discord notifications use `DISCORD_WEBHOOK_URL` and are deduplicated by executable, DLL, checker and result. Failed deliveries are retried. Reports contain hashes, release and environment information. Vendor binaries are not uploaded.
+Only a successful published-release check updates the automated README row. Development results are not published. Discord notifications are deduplicated, and failed deliveries are retried. Reports contain hashes, release and environment details; vendor binaries are not uploaded.
 
 See [Development and testing](https://github.com/sino87/ProcessLasso-NoNag/blob/master/docs/TESTING.md) for build and release steps.
