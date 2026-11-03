@@ -67,13 +67,19 @@ class PublicationTests(unittest.TestCase):
     def test_error_reports_deduplicate_across_source_revisions(self):
         metadata = self.root/'metadata.html'
         metadata.write_text('unrecognized metadata', encoding='utf-8')
+        summary = self.root/'summary.md'
+        summary.write_text('Existing workflow summary\n', encoding='utf-8')
+        original_summary = summary.read_bytes()
         revisions = []
         for source_revision in ('a'*40, 'b'*40):
-            result = subprocess.run([
-                'powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
-                str(ROOT/'scripts/Check-Upstream.ps1'), '-MetadataPath', str(metadata),
-                '-OutputDirectory', str(self.root/'reports'),
-            ], capture_output=True, text=True, env={**os.environ, 'GITHUB_SHA':source_revision}, timeout=30)
+            with patch.dict(os.environ, {'GITHUB_STEP_SUMMARY':str(summary)}):
+                environment = {**os.environ, 'GITHUB_SHA':source_revision}
+                environment.pop('GITHUB_STEP_SUMMARY', None)
+                result = subprocess.run([
+                    'powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                    str(ROOT/'scripts/Check-Upstream.ps1'), '-MetadataPath', str(metadata),
+                    '-OutputDirectory', str(self.root/'reports'),
+                ], capture_output=True, text=True, env=environment, timeout=30)
             self.assertEqual(result.returncode, 1, result.stdout+result.stderr)
             report = json.loads((self.root/'reports/report.json').read_text(encoding='utf-8-sig'))
             self.assertEqual(report['Status'], 'error')
@@ -89,6 +95,7 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(revisions, [expected, expected])
         self.assertEqual(len(self.messages), 1)
         self.assertEqual(self.state_path.read_bytes(), saved)
+        self.assertEqual(summary.read_bytes(), original_summary)
 
     def test_failed_delivery_is_retried(self):
         self.report['Status']='review'
