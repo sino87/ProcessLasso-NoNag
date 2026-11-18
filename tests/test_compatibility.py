@@ -117,7 +117,7 @@ class RealCompatibilityTests(unittest.TestCase):
         self.reference=json.loads((ROOT/'scripts/compatibility-reference.json').read_text())
 
     def test_reviewed_originals_and_real_dialog_resources(self):
-        for version in ('18.3.0.34','18.4.0.48','19.0.0.94'):
+        for version in ('18.3.0.34','18.4.0.48','19.0.0.94','19.1.0.46'):
             with self.subTest(version=version):
                 directory=self.fixtures/version
                 result=compatibility.check(directory/'ProcessLasso.exe',directory/'pl_rsrc_english.dll',DLL,BUILD,self.reference)
